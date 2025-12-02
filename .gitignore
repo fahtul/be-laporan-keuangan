@@ -1,0 +1,13 @@
+node_modules
+notes-api-web-server.pem
+.env
+.prod.env
+src/api/uploads/file
+src/src
+src.rar
+src.zip
+src-13-08-24.zip
+jims-7c45b-firebase-adminsdk-pbq22-f978af7e3a.json
+logs
+uploads
+requests
