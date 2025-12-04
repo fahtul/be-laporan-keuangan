@@ -4,6 +4,14 @@ const InvariantError = require("../../exceptions/InvariantError");
 const NotFoundError = require("../../exceptions/NotFoundError");
 const database = require("../../database");
 
+const ROLE_UNIT_LEADER = 3; // dari sistemmu
+const ROLE_DIVISION_LEADER = 2; // sesuaikan kalau beda
+
+const LEVEL_LABELS = {
+  1: "Pengawas",
+  2: "Operasional",
+};
+
 class RequestsService {
   constructor() {
     this._db = database.getConnection();
@@ -293,26 +301,41 @@ class RequestsService {
     });
 
     // map rows + parse evidence photos to array
-    const mapped = rows.map((r) => ({
-      id: r.id,
-      user_id: r.user_id,
-      user_name: r.user_name,
-      type: r.type,
-      reason: r.reason,
-      request_date: r.request_date,
-      request_end_date: r.request_end_date,
-      start_time: r.start_time,
-      end_time: r.end_time,
-      shift_id: r.shift_id,
-      status: r.request_status,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      evidence_photos: (r.evidence_photo || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      approvals: apprMap.get(r.id) || [],
-    }));
+    const mapped = rows.map((r) => {
+      const approvals = apprMap.get(r.id) || [];
+      return {
+        id: r.id,
+        user_id: r.user_id,
+        user_name: r.user_name,
+        type: r.type,
+        reason: r.reason,
+        request_date: r.request_date,
+        request_end_date: r.request_end_date,
+        start_time: r.start_time,
+        end_time: r.end_time,
+        shift_id: r.shift_id,
+        status: r.request_status,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        evidence_photos: (r.evidence_photo || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        approvals,
+        progress_persetujuan: this._buildApprovalProgress(
+          approvals.map((a) => ({
+            // samakan shape dengan di getRequestWithDetails
+            request_id: r.id,
+            approver_id: a.approver_id,
+            approver_name: a.approver_name,
+            level: a.level,
+            approval_status: a.status,
+            note: a.note,
+            decided_at: a.decided_at,
+          }))
+        ),
+      };
+    });
 
     return { rows: mapped, total };
   }
@@ -329,7 +352,7 @@ class RequestsService {
       FROM requests r
       JOIN users u ON u.id = r.user_id
       WHERE r.id = ?
-      `,
+    `,
       [requestId]
     );
     if (!rows.length) throw new NotFoundError("Request tidak ditemukan");
@@ -348,10 +371,12 @@ class RequestsService {
       FROM request_approvals ra
       JOIN users ua ON ua.id = ra.approver_id
       WHERE ra.request_id = ?
-      ORDER BY ra.level
-      `,
+      ORDER BY ra.level, ra.decided_at
+    `,
       [requestId]
     );
+
+    const progress_persetujuan = this._buildApprovalProgress(appr);
 
     return {
       id: r.id,
@@ -371,6 +396,8 @@ class RequestsService {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+
+      // detail per approver (kalau front-end masih butuh)
       approvals: appr.map((a) => ({
         approver_id: a.approver_id,
         approver_name: a.approver_name,
@@ -379,6 +406,9 @@ class RequestsService {
         note: a.note,
         decided_at: a.decided_at,
       })),
+
+      // 🔥 progress per level: "Pengawas", "Operasional"
+      progress_persetujuan,
     };
   }
 
@@ -399,12 +429,11 @@ class RequestsService {
       type,
       reason = null,
       request_date,
-      request_end_date = null, // ← default to null
-      start_time = null, // ← default to null
-      end_time = null, // ← default to null
-      shift_id = null, // ← default to null
+      request_end_date = null,
+      start_time = null,
+      end_time = null,
+      shift_id = null,
       evidence_photos = [],
-      approverIds = [],
     } = data;
 
     console.log("➡️ [createRequest] Called with:", {
@@ -417,16 +446,8 @@ class RequestsService {
       end_time,
       shift_id,
       evidence_photos,
-      approverIds,
     });
 
-    if (type === "late_attendance") {
-      console.log(
-        "🐛 DEBUG [createRequest] type is late_attendance (Absen Susulan)"
-      );
-    }
-
-    // join filenames into a comma list
     const photosField = evidence_photos.join(",");
     console.log("📁 [createRequest] photosField:", photosField);
 
@@ -451,8 +472,6 @@ class RequestsService {
       photosField,
     ];
 
-    console.log("🧾 [createRequest] Insert query values:", values);
-
     const [result] = await this._db.execute(insertQuery, values);
     console.log("🧾 [createRequest] Raw insert result:", result);
 
@@ -460,26 +479,139 @@ class RequestsService {
       console.error("❌ [createRequest] affectedRows !== 1");
       throw new InvariantError("Gagal membuat permintaan");
     }
+
     const requestId = result.insertId;
     console.log(
       `✅ [createRequest] New request inserted. id=${requestId}, type=${type}`
     );
 
-    // insert approvals
-    for (let i = 0; i < approverIds.length; i++) {
-      console.log(
-        `🧾 [createRequest] Inserting approval level=${i + 1} approverId=${
-          approverIds[i]
-        }`
+    // ==============================
+    //  Ambil semua approver otomatis
+    // ==============================
+    const approvers = await this._getApproversForUser(userId);
+
+    if (!approvers.length) {
+      console.warn(
+        `⚠️ [createRequest] Tidak ditemukan unit/division leader untuk userId=${userId}`
       );
-      await this._db.execute(
-        `INSERT INTO request_approvals(request_id, approver_id, level)
-       VALUES (?, ?, ?)`,
-        [requestId, approverIds[i], i + 1]
-      );
+      return requestId;
+    }
+
+    // ==== Penentuan LEVEL tergantung type ====
+    if (type === "time_off") {
+      // 👉 Multi-approval: beda level (unit vs division)
+      for (const { approverId, roleId } of approvers) {
+        const level = roleId === ROLE_UNIT_LEADER ? 1 : 2; // 1 = unit, 2 = division
+        console.log(
+          `🧾 [createRequest] Inserting TIME_OFF approval approverId=${approverId}, level=${level}`
+        );
+        await this._db.execute(
+          `INSERT INTO request_approvals (request_id, approver_id, level)
+         VALUES (?, ?, ?)`,
+          [requestId, approverId, level]
+        );
+      }
+    } else {
+      // 👉 Tipe lain (sick, overtime, dll): semua 1 level saja
+      for (const { approverId } of approvers) {
+        console.log(
+          `🧾 [createRequest] Inserting NON-TIME_OFF approval approverId=${approverId}, level=1`
+        );
+        await this._db.execute(
+          `INSERT INTO request_approvals (request_id, approver_id, level)
+         VALUES (?, ?, 1)`,
+          [requestId, approverId]
+        );
+      }
     }
 
     return requestId;
+  }
+
+  // Di dalam class RequestService (atau service yg sama)
+  async _getApproversForUser(userId) {
+    // 1) Ambil unit & division si pemohon
+    const [userRows] = await this._db.execute(
+      `SELECT unit_id, division_id FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!userRows.length) {
+      throw new NotFoundError("User pemohon tidak ditemukan");
+    }
+
+    const { unit_id, division_id } = userRows[0];
+
+    // 2) Ambil semua unit_leader & division_leader di unit/division yang sama
+    const [leaderRows] = await this._db.execute(
+      `
+      SELECT id, role_id, unit_id, division_id
+      FROM users
+      WHERE id <> ?
+        AND (
+          (role_id = ? AND unit_id = ?)
+          OR
+          (role_id = ? AND division_id = ?)
+        )
+    `,
+      [userId, ROLE_UNIT_LEADER, unit_id, ROLE_DIVISION_LEADER, division_id]
+    );
+
+    // ⬅️ sekarang balikkan roleId, biar penentuan level di createRequest
+    return leaderRows.map((row) => ({
+      approverId: row.id,
+      roleId: row.role_id,
+    }));
+  }
+
+  _buildApprovalProgress(apprRows) {
+    // apprRows: hasil join request_approvals + users utk 1 request_id
+
+    const map = new Map();
+    for (const a of apprRows) {
+      if (!map.has(a.level)) map.set(a.level, []);
+      map.get(a.level).push(a);
+    }
+
+    const progress = [];
+
+    for (const [level, rows] of map.entries()) {
+      // Tentukan status level:
+      // - Kalau ada rejected → level = rejected
+      // - else kalau ada approved → level = approved
+      // - else → pending
+      let decidedRow = rows.find((r) => r.approval_status === "rejected");
+      let status;
+
+      if (decidedRow) {
+        status = "rejected";
+      } else {
+        decidedRow = rows.find((r) => r.approval_status === "approved");
+        if (decidedRow) {
+          status = "approved";
+        } else {
+          status = "pending";
+        }
+      }
+
+      progress.push({
+        level,
+        label: LEVEL_LABELS[level] || `Level ${level}`,
+        status, // 'pending' | 'approved' | 'rejected'
+        decided_by: decidedRow
+          ? {
+              id: decidedRow.approver_id,
+              name: decidedRow.approver_name,
+            }
+          : null,
+        note: decidedRow?.note || null,
+        decided_at: decidedRow?.decided_at || null,
+      });
+    }
+
+    // urutkan level 1, 2, ...
+    progress.sort((a, b) => a.level - b.level);
+    return progress;
   }
 
   /**
@@ -492,6 +624,9 @@ class RequestsService {
    * - approver level 2 (id, name, status)
    */
   async getRequests(userId, role, limit, offset, search = "") {
+    limit = parseInt(limit, 10) || 20;
+    offset = parseInt(offset, 10) || 0;
+
     let query = `
     SELECT
       r.id,
@@ -500,59 +635,76 @@ class RequestsService {
       r.type,
       r.reason,
       r.request_date,
-      r.request_end_date, 
+      r.request_end_date,
       r.start_time,
       r.end_time,
       r.shift_id,
       r.status         AS request_status,
       r.evidence_photo,
       r.created_at     AS request_created_at,
-      ra1.approver_id  AS approver_level1_id,
-      ua1.fullname     AS approver_level1_name,
-      ra1.status       AS approver_level1_status,
-      ra2.approver_id  AS approver_level2_id,
-      ua2.fullname     AS approver_level2_name,
-      ra2.status       AS approver_level2_status
+
+      -- ==== SUMMARY LEVEL 1: UNIT LEADER ====
+      ul.approved_count   AS unit_approved_count,
+      ul.rejected_count   AS unit_rejected_count,
+      ul.pending_count    AS unit_pending_count,
+      CASE
+        WHEN ul.rejected_count > 0 THEN 'rejected'
+        WHEN ul.approved_count > 0 THEN 'approved'
+        WHEN ul.pending_count IS NULL THEN NULL   -- tidak ada approver level 1
+        ELSE 'pending'
+      END AS unit_decision,
+
+      -- ==== SUMMARY LEVEL 2: DIVISION LEADER ====
+      dl.approved_count   AS division_approved_count,
+      dl.rejected_count   AS division_rejected_count,
+      dl.pending_count    AS division_pending_count,
+      CASE
+        WHEN dl.rejected_count > 0 THEN 'rejected'
+        WHEN dl.approved_count > 0 THEN 'approved'
+        WHEN dl.pending_count IS NULL THEN NULL   -- tidak ada approver level 2
+        ELSE 'pending'
+      END AS division_decision
+
     FROM requests r
     JOIN users u ON u.id = r.user_id
+
+    -- summary approvals untuk level 1 (unit_leader)
     LEFT JOIN (
-      SELECT request_id, approver_id, status
-      FROM request_approvals
-      WHERE level = 1
-    ) ra1 ON ra1.request_id = r.id
-    LEFT JOIN users ua1 ON ua1.id = ra1.approver_id
+      SELECT
+        ra.request_id,
+        SUM(ra.status = 'approved') AS approved_count,
+        SUM(ra.status = 'rejected') AS rejected_count,
+        SUM(ra.status = 'pending')  AS pending_count
+      FROM request_approvals ra
+      WHERE ra.level = 1
+      GROUP BY ra.request_id
+    ) ul ON ul.request_id = r.id
+
+    -- summary approvals untuk level 2 (division_leader)
     LEFT JOIN (
-      SELECT request_id, approver_id, status
-      FROM request_approvals
-      WHERE level = 2
-    ) ra2 ON ra2.request_id = r.id
-    LEFT JOIN users ua2 ON ua2.id = ra2.approver_id
+      SELECT
+        ra.request_id,
+        SUM(ra.status = 'approved') AS approved_count,
+        SUM(ra.status = 'rejected') AS rejected_count,
+        SUM(ra.status = 'pending')  AS pending_count
+      FROM request_approvals ra
+      WHERE ra.level = 2
+      GROUP BY ra.request_id
+    ) dl ON dl.request_id = r.id
   `;
 
     const params = [];
     const where = [];
 
-    // if (role !== 4) {
-    //   where.push(`(
-    //   r.user_id = ?
-    //   OR EXISTS (
-    //     SELECT 1 FROM request_approvals rav
-    //     WHERE rav.request_id = r.id AND rav.approver_id = ?
-    //   )
-    // )`);
-    //   params.push(userId, userId);
-    // } else {
-    //   where.push(`r.user_id = ?`);
-    //   params.push(userId);
-    // }
-
+    // 🔐 FILTER: sementara cuma request milik user itu
+    // kalau nanti mau aktifkan juga yg dia approve, bisa pakai EXISTS ke request_approvals
     where.push(`r.user_id = ?`);
     params.push(userId);
 
     if (search) {
       where.push(`(
-      r.reason     LIKE ?
-      OR r.type    LIKE ?
+      r.reason   LIKE ?
+      OR r.type  LIKE ?
       OR u.fullname LIKE ?
     )`);
       const like = `%${search}%`;
@@ -563,54 +715,34 @@ class RequestsService {
       query += " WHERE " + where.join(" AND ");
     }
 
-    // Inline LIMIT/OFFSET instead of placeholders
     query += `
     ORDER BY r.created_at DESC
-    LIMIT ${parseInt(limit, 10)} OFFSET ${parseInt(offset, 10)}
+    LIMIT ${limit} OFFSET ${offset}
   `;
 
     const [rows] = await this._db.execute(query, params);
     return rows;
   }
 
-  /**
-   * Hitung total request (untuk paging), struktur WHERE sama dengan getRequests.
-   */
   async getRequestsCount(userId, role, search = "") {
     let query = `
-      SELECT COUNT(*) AS count
-      FROM requests r
-      JOIN users u
-        ON u.id = r.user_id
-    `;
+    SELECT COUNT(DISTINCT r.id) AS count
+    FROM requests r
+    JOIN users u ON u.id = r.user_id
+  `;
     const params = [];
     const whereClauses = [];
 
-    // if (role !== 4) {
-    //   whereClauses.push(`(
-    //     r.user_id = ?
-    //     OR EXISTS (
-    //       SELECT 1
-    //       FROM request_approvals rav
-    //       WHERE rav.request_id = r.id
-    //         AND rav.approver_id = ?
-    //     )
-    //   )`);
-    //   params.push(userId, userId);
-    // } else {
-    //   whereClauses.push(`r.user_id = ?`);
-    //   params.push(userId);
-    // }
-
+    // sama dengan getRequests: sementara hanya request milik user
     whereClauses.push(`r.user_id = ?`);
     params.push(userId);
 
     if (search) {
       whereClauses.push(`(
-        r.reason     LIKE ?
-        OR r.type    LIKE ?
-        OR u.fullname LIKE ?
-      )`);
+      r.reason   LIKE ?
+      OR r.type  LIKE ?
+      OR u.fullname LIKE ?
+    )`);
       const likeSearch = `%${search}%`;
       params.push(likeSearch, likeSearch, likeSearch);
     }
@@ -618,57 +750,9 @@ class RequestsService {
     if (whereClauses.length) {
       query += " WHERE " + whereClauses.join(" AND ");
     }
+
     console.log(
-      "Executing query get requests count 1:",
-      query,
-      "with params:",
-      params
-    );
-    const [rows] = await this._db.execute(query, params);
-    return rows[0].count;
-  }
-
-  /**
-   * Hitung jumlah request (untuk paging)
-   */
-  async getRequestsCount(userId, role, search = "") {
-    let query = `
-      SELECT COUNT(DISTINCT r.id) AS count
-      FROM requests r
-      JOIN users u ON u.id = r.user_id
-    `;
-    const params = [];
-    const whereClauses = [];
-
-    // if (role !== 4) {
-    //   query += `
-    //     LEFT JOIN request_approvals ra2
-    //       ON ra2.request_id = r.id
-    //   `;
-    //   whereClauses.push(`( r.user_id = ? OR ra2.approver_id = ? )`);
-    //   params.push(userId, userId);
-    // } else {
-    //   whereClauses.push(`r.user_id = ?`);
-    //   params.push(userId);
-    // }
-    whereClauses.push(`r.user_id = ?`);
-    params.push(userId);
-
-    if (search) {
-      whereClauses.push(`(
-        r.reason LIKE ?
-        OR r.type   LIKE ?
-        OR u.fullname LIKE ?
-      )`);
-      const likeSearch = `%${search}%`;
-      params.push(likeSearch, likeSearch, likeSearch);
-    }
-
-    if (whereClauses.length) {
-      query += " WHERE " + whereClauses.join(" AND ");
-    }
-    console.log(
-      "Executing query get requests count 2:",
+      "Executing query getRequestsCount:",
       query,
       "with params:",
       params
@@ -702,78 +786,119 @@ class RequestsService {
       UPDATE request_approvals
       SET status = ?, note = ?, decided_at = NOW()
       WHERE request_id = ? AND approver_id = ?
-      `,
+    `,
       [status, note, requestId, approverId]
     );
+
     if (result.affectedRows === 0) {
       throw new NotFoundError(
         "Anda tidak berhak menyetujui atau data approval tidak ditemukan"
       );
     }
 
-    // 2) Check if any approvals are still pending
-    const [remaining] = await this._db.execute(
+    // 2) Ambil type request dulu
+    const [reqRows] = await this._db.execute(
+      `SELECT type FROM requests WHERE id = ?`,
+      [requestId]
+    );
+    if (!reqRows.length) {
+      throw new NotFoundError("Request tidak ditemukan");
+    }
+
+    const { type } = reqRows[0];
+
+    // 3) Untuk selain "time_off" → langsung pakai status dari approver
+    if (type !== "time_off") {
+      await this._db.execute(`UPDATE requests SET status = ? WHERE id = ?`, [
+        status,
+        requestId,
+      ]);
+      return;
+    }
+
+    // ==============================
+    //  KHUSUS type = "time_off"
+    //  Multi-approval: 1 unit_leader & 1 division_leader cukup
+    // ==============================
+
+    // Ambil rekap status per level (1 = unit, 2 = division)
+    const [groups] = await this._db.execute(
       `
-      SELECT COUNT(*) AS count
+      SELECT 
+        level,
+        SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END) AS pending_count,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count,
+        COUNT(*) AS total_count
       FROM request_approvals
-      WHERE request_id = ? AND status = 'pending'
-      `,
+      WHERE request_id = ?
+      GROUP BY level
+    `,
       [requestId]
     );
 
-    // 3) Only once there are no more 'pending' rows do we finalize the request.status
-    // if (remaining[0].count === 0) {
-    // a) total number of approvers
-    const [allRows] = await this._db.execute(
-      `
-        SELECT COUNT(*) AS total
-        FROM request_approvals
-        WHERE request_id = ?
-        `,
-      [requestId]
-    );
-    const totalApprovers = allRows[0].total;
+    // Bentuk keputusan per level: 'pending' | 'approved' | 'rejected'
+    const levelDecisions = {}; // { 1: 'approved', 2: 'pending', ... }
 
-    // b) how many have approved
-    const [approvedCountRow] = await this._db.execute(
-      `
-        SELECT COUNT(*) AS count
-        FROM request_approvals
-        WHERE request_id = ? AND status = 'approved'
-        `,
-      [requestId]
-    );
-    const approvedCount = approvedCountRow[0].count;
+    for (const row of groups) {
+      let decision = "pending";
 
-    // c) how many have rejected
-    const [rejectedCountRow] = await this._db.execute(
-      `
-        SELECT COUNT(*) AS count
-        FROM request_approvals
-        WHERE request_id = ? AND status = 'rejected'
-        `,
-      [requestId]
-    );
-    const rejectedCount = rejectedCountRow[0].count;
+      if (row.rejected_count > 0) {
+        // Kalau ada yang reject di level ini → level dianggap rejected
+        decision = "rejected";
+      } else if (row.approved_count > 0) {
+        // Tidak ada reject, tapi sudah ada minimal 1 approve → level approved
+        decision = "approved";
+      } else {
+        // semua masih pending di level ini
+        decision = "pending";
+      }
 
-    // d) decide final status
-    let finalStatus;
-    if (rejectedCount > 0) {
-      // if any rejection, whole request is rejected
-      finalStatus = "rejected";
-    } else if (approvedCount === totalApprovers) {
-      // only if everyone approved
-      finalStatus = "approved";
-    } else if (approvedCount < totalApprovers) {
-      // if some approved, but not all, leave as pending
-      finalStatus = "pending";
-    } else {
-      // should not normally happen since we've checked no pendings,
-      // but as a safety fallback:
+      levelDecisions[row.level] = decision;
+    }
+
+    // Tentukan level mana saja yang memang ada (misalnya, ada unit_leader tapi tidak ada division_leader)
+    const existingLevels = Object.keys(levelDecisions); // contoh: ["1", "2"]
+
+    // Kalau tidak ada level sama sekali, biarkan tetap pending saja (kasus aneh)
+    if (existingLevels.length === 0) {
+      await this._db.execute(
+        `UPDATE requests SET status = 'pending' WHERE id = ?`,
+        [requestId]
+      );
+      return;
+    }
+
+    // ===== GATING LOGIC =====
+    // Kita hanya finalize kalau SETIAP level yang ada SUDAH punya keputusan (bukan pending)
+    const anyPendingLevel = Object.values(levelDecisions).some(
+      (d) => d === "pending"
+    );
+
+    if (anyPendingLevel) {
+      // Masih ada level (misal division_leader) yang belum ada approve/reject sama sekali
+      // → request tetap pending
+      await this._db.execute(
+        `UPDATE requests SET status = 'pending' WHERE id = ?`,
+        [requestId]
+      );
+      return;
+    }
+
+    // Sampai sini: semua level yang ADA sudah punya keputusan:
+    // - minimal 1 unit_leader sudah approve/reject
+    // - minimal 1 division_leader sudah approve/reject
+    //   (kecuali kalau memang tidak ada division_leader untuk unit tsb)
+
+    // FINAL STATUS:
+    // - Kalau ada level yang 'rejected' → final = rejected
+    // - Kalau semua level 'approved'   → final = approved
+    let finalStatus = "approved";
+
+    if (Object.values(levelDecisions).includes("rejected")) {
       finalStatus = "rejected";
     }
 
-    // e) persist final status
     await this._db.execute(`UPDATE requests SET status = ? WHERE id = ?`, [
       finalStatus,
       requestId,
@@ -785,35 +910,43 @@ class RequestsService {
    */
   async getPendingApprovals(approverId) {
     const query = `
-      SELECT
-        ra.id,
-        ra.request_id,
-        ra.level,
-        ra.status         AS approval_status,
-        ra.note,
-        ra.decided_at,
-        ra.created_at     AS approval_created_at,
-        ra.updated_at     AS approval_updated_at,
-        r.type,
-        r.evidence_photo,
-        r.reason,
-        r.request_date,
-        r.request_end_date, 
-        r.start_time,
-        r.end_time,
-        r.shift_id,
-        r.status         AS request_status,
-        r.created_at     AS request_created_at,
-        r.updated_at     AS request_updated_at,
-        u.fullname       AS user_name,
-        u.id             AS user_id
-      FROM request_approvals ra
-      JOIN requests r   ON r.id = ra.request_id
-      JOIN users u      ON u.id = r.user_id
-      WHERE ra.approver_id = ?
-        AND ra.status = 'pending'
-      ORDER BY ra.created_at DESC
-    `;
+    SELECT
+      ra.id,
+      ra.request_id,
+      ra.level,
+      ra.status         AS approval_status,
+      ra.note,
+      ra.decided_at,
+      ra.created_at     AS approval_created_at,
+      ra.updated_at     AS approval_updated_at,
+      r.type,
+      r.evidence_photo,
+      r.reason,
+      r.request_date,
+      r.request_end_date, 
+      r.start_time,
+      r.end_time,
+      r.shift_id,
+      r.status         AS request_status,
+      r.created_at     AS request_created_at,
+      r.updated_at     AS request_updated_at,
+      u.fullname       AS user_name,
+      u.id             AS user_id
+    FROM request_approvals ra
+    JOIN requests r   ON r.id = ra.request_id
+    JOIN users u      ON u.id = r.user_id
+    WHERE ra.approver_id = ?
+      AND ra.status = 'pending'
+      AND r.status  = 'pending'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM request_approvals ra2
+        WHERE ra2.request_id = ra.request_id
+          AND ra2.level      = ra.level
+          AND ra2.status IN ('approved','rejected')
+      )
+    ORDER BY ra.created_at DESC
+  `;
 
     const [rows] = await this._db.execute(query, [approverId]);
     return rows;
