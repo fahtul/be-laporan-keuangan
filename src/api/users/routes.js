@@ -72,6 +72,7 @@ const routes = (handler) => [
       auth: "jims_jwt",
     },
   },
+  
 ];
 
 module.exports = routes;

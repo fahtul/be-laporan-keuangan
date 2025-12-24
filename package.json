@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start:prod": "node ./src/server.js",
-    "start:dev": "nodemon ./src/server.js"
+    "start:dev": "nodemon ./src/server.js",
+    "migrate:make": "knex migrate:make --knexfile knexfile.js",
+    "migrate:latest": "knex migrate:latest --knexfile knexfile.js",
+    "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js"
   },
   "keywords": [],
   "author": "FAR",
@@ -14,6 +17,7 @@
     "eslint": "^8.57.0",
     "eslint-config-airbnb-base": "^15.0.0",
     "eslint-plugin-import": "^2.29.1",
+    "knex-cli": "^1.0.1",
     "nodemon": "^3.1.4"
   },
   "dependencies": {
@@ -29,6 +33,7 @@
     "firebase-admin": "^12.3.1",
     "joi": "^17.13.1",
     "json2csv": "^6.0.0-alpha.2",
+    "knex": "^3.1.0",
     "mime-types": "^3.0.1",
     "moment-timezone": "^0.5.48",
     "multer": "^2.0.0",
@@ -36,6 +41,7 @@
     "mysql2": "^3.9.7",
     "nanoid": "^3.1.20",
     "node-cron": "^4.2.1",
-    "nodemailer": "^7.0.11"
+    "nodemailer": "^7.0.11",
+    "pg": "^8.16.3"
   }
 }
