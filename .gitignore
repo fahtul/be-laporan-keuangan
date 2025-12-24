@@ -1,4 +1,5 @@
 node_modules
+requests
 notes-api-web-server.pem
 .env
 .prod.env
@@ -10,4 +11,3 @@ src-13-08-24.zip
 jims-7c45b-firebase-adminsdk-pbq22-f978af7e3a.json
 logs
 uploads
-requests
