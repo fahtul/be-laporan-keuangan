@@ -3,7 +3,7 @@ const NotFoundError = require("../../exceptions/NotFoundError");
 const InvariantError = require("../../exceptions/InvariantError");
 
 function normalBalanceFromType(type) {
-  // sama seperti FE kamu: asset/expense => debit, selain itu => credit
+  // asset/expense => debit, selain itu => credit
   return type === "asset" || type === "expense" ? "debit" : "credit";
 }
 
@@ -28,6 +28,11 @@ function deltaForLine({ debit, credit }, normalPos) {
 
 class LedgersService {
   async getLedger({ organizationId, accountId, fromDate, toDate }) {
+    if (!organizationId) throw new InvariantError("organizationId is required");
+    if (!accountId) throw new InvariantError("accountId is required");
+    if (!fromDate || !toDate)
+      throw new InvariantError("fromDate and toDate are required");
+
     if (new Date(fromDate) > new Date(toDate)) {
       throw new InvariantError("from_date must be <= to_date");
     }
@@ -41,13 +46,13 @@ class LedgersService {
       .first();
 
     if (!account) {
-      // kalau kamu tidak punya NotFoundError, ganti jadi InvariantError("Account not found")
       throw new NotFoundError("Account not found");
     }
 
     const normalPos = normalBalanceFromType(account.type);
 
-    // 2) Opening sums = semua transaksi POSTED sebelum fromDate
+    // 2) OPENING SUM (Opsi B):
+    // saldo sebelum periode = semua transaksi POSTED sebelum fromDate
     const openingSum = await knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
@@ -69,10 +74,12 @@ class LedgersService {
     let openingSigned = round2(
       deltaForLine({ debit: openingDebit, credit: openingCredit }, normalPos)
     );
+
     const openingPos = posFromSigned(openingSigned, normalPos);
     const openingAbs = round2(Math.abs(openingSigned));
 
-    // 3) Ambil transaksi dalam range (POSTED)
+    // 3) TRANSAKSI PERIODE (Opsi B):
+    // include semua transaksi posted di range, termasuk entry_type='opening' pada fromDate
     const txRows = await knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
@@ -85,7 +92,8 @@ class LedgersService {
       .andWhere("je.date", "<=", toDate)
       .select(
         "je.id as entry_id",
-        "je.date",
+        // normalize date to YYYY-MM-DD (Postgres). Jika kolom je.date sudah DATE, ini aman.
+        knex.raw("je.date::date as date"),
         "je.memo as entry_memo",
         "je.entry_type",
         "je.created_at as entry_created_at",
@@ -95,8 +103,9 @@ class LedgersService {
         "jl.credit",
         "jl.created_at as line_created_at"
       )
-      // urutan deterministik biar running balance konsisten
-      .orderBy("je.date", "asc")
+      // urutan deterministik + opening duluan pada tanggal yang sama
+      .orderBy("date", "asc")
+      .orderByRaw(`CASE WHEN je.entry_type = 'opening' THEN 0 ELSE 1 END`)
       .orderBy("je.created_at", "asc")
       .orderBy("je.id", "asc")
       .orderBy("jl.created_at", "asc")
@@ -105,17 +114,17 @@ class LedgersService {
     // 4) Hitung running balance
     let runningSigned = openingSigned;
 
-    // optional: bikin 1 baris pseudo "Saldo awal" biar FE mirip Excel
+    // baris pseudo OPEN (saldo sebelum periode) untuk FE biar mirip Excel
     const rows = [
       {
         kind: "opening",
-        date: fromDate,
+        date: fromDate, // tampil di awal tabel, tapi maknanya "saldo sebelum periode"
         ref: null,
-        description: "Saldo awal",
+        description: "Saldo sebelum periode",
         debit: 0,
         credit: 0,
         running_balance: openingAbs,
-        running_pos: openingPos, // Debet/Kredit
+        running_pos: openingPos,
       },
     ];
 
@@ -135,13 +144,18 @@ class LedgersService {
       const runningPos = posFromSigned(runningSigned, normalPos);
       const runningAbs = round2(Math.abs(runningSigned));
 
+      const desc =
+        (r.line_memo && String(r.line_memo).trim()) ||
+        (r.entry_memo && String(r.entry_memo).trim()) ||
+        "";
+
       rows.push({
         kind: "tx",
-        date: r.date,
-        ref: r.entry_id, // "Bukti transaksi" (kalau kamu punya entry_no, bisa diganti)
+        date: r.date, // sudah dinormalisasi (YYYY-MM-DD)
+        ref: r.entry_id,
         entry_id: r.entry_id,
         entry_type: r.entry_type,
-        description: r.line_memo || r.entry_memo || "",
+        description: desc,
         debit,
         credit,
         running_balance: runningAbs,
@@ -162,7 +176,7 @@ class LedgersService {
         code: account.code,
         name: account.name,
         type: account.type,
-        normal_balance: normalPos, // debit/credit
+        normal_balance: normalPos,
       },
       period: { from_date: fromDate, to_date: toDate },
       opening: {

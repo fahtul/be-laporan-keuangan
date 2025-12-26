@@ -4,6 +4,8 @@ const journalEntriesPlugin = require("../api/journalEntries");
 const businessPartnersPlugins = require("../api/businessPartners");
 const openingBalancesPlugin = require("../api/openingBalances");
 const ledgersPlugin = require("../api/ledgers");
+const trialBalancePlugin = require("../api/trialBalance");
+const incomeStatementPlugin = require("../api/incomeStatement");
 
 async function registerPlugins(server, container) {
   await server.register([
@@ -48,6 +50,24 @@ async function registerPlugins(server, container) {
       options: {
         service: container.ledgersService,
         validator: container.ledgersValidator,
+      },
+    },
+
+    {
+      plugin: trialBalancePlugin,
+      options: {
+        service: container.trialBalanceService,
+        validator: container.trialBalanceValidator,
+        auditLogService: container.auditLogService,
+      },
+    },
+
+    {
+      plugin: incomeStatementPlugin,
+      options: {
+        service: container.incomeStatementService,
+        validator: container.incomeStatementValidator,
+        auditLogService: container.auditLogService,
       },
     },
 
