@@ -1,0 +1,17 @@
+ref_no;date;memo;status
+JE-RS-0001;2025-12-01;Setoran modal awal ke rekening operasional;posted
+JE-RS-0002;2025-12-02;Pembelian persediaan obat kredit dari supplier;posted
+JE-RS-0003;2025-12-03;Pemakaian obat untuk pelayanan pasien (HPP);posted
+JE-RS-0004;2025-12-03;Pendapatan rawat jalan dibayar tunai;posted
+JE-RS-0005;2025-12-03;Penjualan obat (farmasi) dibayar tunai;posted
+JE-RS-0006;2025-12-04;Tagihan klaim BPJS untuk rawat inap (piutang);posted
+JE-RS-0007;2025-12-05;Penerimaan pembayaran BPJS (sebagian) ke bank;posted
+JE-RS-0008;2025-12-06;Terima deposit pasien (uang muka);posted
+JE-RS-0009;2025-12-06;Pengakuan pendapatan dari deposit pasien;posted
+JE-RS-0010;2025-12-31;Akrual gaji bulan berjalan;posted
+JE-RS-0011;2026-01-01;Pembayaran gaji via bank payroll;posted
+JE-RS-0012;2025-12-31;Akrual jasa dokter;posted
+JE-RS-0013;2026-01-02;Pembayaran hutang supplier obat via bank;posted
+JE-RS-0014;2025-12-31;Penyusutan alat medis bulanan;posted
+JE-RS-0015;2025-12-10;Biaya pengelolaan limbah medis dibayar tunai;posted
+JE-RS-0016;2025-12-12;Biaya administrasi bank;posted

@@ -1,0 +1,48 @@
+ref_no;account_code;line_memo;debit;credit
+JE-RS-0001;1112;Setoran modal masuk ke Bank BCA Operasional;500000000;0
+JE-RS-0001;3100;Modal disetor;0;500000000
+
+JE-RS-0002;1131;Pembelian obat (Persediaan Obat);150000000;0
+JE-RS-0002;2111;Hutang ke supplier obat;0;150000000
+
+JE-RS-0003;5110;Pemakaian obat untuk pelayanan pasien (HPP);35000000;0
+JE-RS-0003;1131;Pengurangan persediaan obat;0;35000000
+
+JE-RS-0004;1111;Penerimaan rawat jalan tunai;12500000;0
+JE-RS-0004;4120;Pendapatan rawat jalan;0;12500000
+
+JE-RS-0005;1111;Penerimaan penjualan obat tunai;3200000;0
+JE-RS-0005;4310;Penjualan obat (Farmasi);0;3200000
+
+JE-RS-0006;1121;Piutang klaim BPJS rawat inap;220000000;0
+JE-RS-0006;4110;Pendapatan rawat inap;0;220000000
+
+JE-RS-0007;1112;Penerimaan pembayaran BPJS ke bank;180000000;0
+JE-RS-0007;1121;Pelunasan sebagian piutang BPJS;0;180000000
+
+JE-RS-0008;1111;Deposit pasien diterima tunai;10000000;0
+JE-RS-0008;2140;Pendapatan diterima dimuka/deposit pasien;0;10000000
+
+JE-RS-0009;2140;Pemakaian deposit pasien menjadi pendapatan;10000000;0
+JE-RS-0009;4130;Pendapatan IGD;0;10000000
+
+JE-RS-0010;5210;Beban gaji & upah bulan berjalan;85000000;0
+JE-RS-0010;2121;Gaji terutang;0;85000000
+
+JE-RS-0011;2121;Pembayaran gaji terutang;85000000;0
+JE-RS-0011;1113;Bank Mandiri - Payroll;0;85000000
+
+JE-RS-0012;5220;Beban jasa dokter;40000000;0
+JE-RS-0012;2122;Jasa dokter terutang;0;40000000
+
+JE-RS-0013;2111;Bayar hutang supplier obat;120000000;0
+JE-RS-0013;1112;Keluar bank untuk bayar supplier;0;120000000
+
+JE-RS-0014;5520;Penyusutan alat medis (beban);18000000;0
+JE-RS-0014;1222;Akumulasi penyusutan alat medis;0;18000000
+
+JE-RS-0015;5340;Biaya pengelolaan limbah medis;2500000;0
+JE-RS-0015;1111;Bayar tunai;0;2500000
+
+JE-RS-0016;5630;Biaya administrasi bank;150000;0
+JE-RS-0016;1112;Potongan biaya bank dari rekening;0;150000

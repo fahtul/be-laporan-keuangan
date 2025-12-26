@@ -1,5 +1,4 @@
 const autoBind = require("auto-bind");
-const InvariantError = require("../../exceptions/InvariantError");
 
 class JournalEntriesHandler {
   constructor(service, validator, auditLogService) {
@@ -8,6 +7,46 @@ class JournalEntriesHandler {
     this._audit = auditLogService;
 
     autoBind(this);
+  }
+
+  async list(request, h) {
+    const organizationId = request.auth.credentials.organizationId;
+
+    const page = Number(request.query.page ?? 1);
+    const limit = Number(request.query.limit ?? 20);
+    const q = (request.query.q ?? "").toString().trim();
+
+    const status = (request.query.status ?? "").toString().trim(); // draft|posted|void
+    const fromDate = (request.query.from_date ?? "").toString().trim() || null;
+    const toDate = (request.query.to_date ?? "").toString().trim() || null;
+
+    if (page < 1 || limit < 1 || limit > 100) {
+      return h
+        .response({ status: "fail", message: "Invalid pagination" })
+        .code(400);
+    }
+
+    if (status && !["draft", "posted", "void"].includes(status)) {
+      return h
+        .response({ status: "fail", message: "Invalid status filter" })
+        .code(400);
+    }
+
+    const result = await this._service.list({
+      organizationId,
+      page,
+      limit,
+      q,
+      status,
+      fromDate,
+      toDate,
+    });
+
+    return h.response({
+      status: "success",
+      data: result.items,
+      meta: result.meta,
+    });
   }
 
   async getById(request, h) {
@@ -74,50 +113,55 @@ class JournalEntriesHandler {
   }
 
   async post(request, h) {
-    // payload typically empty; validator keeps it clean
-    this._validator.validatePost(request.payload || {});
+    try {
+      this._validator.validatePost(request.payload || {});
 
-    const organizationId = request.auth.credentials.organizationId;
-    const actorId = request.auth.credentials.id;
-    const { id } = request.params;
+      const organizationId = request.auth.credentials.organizationId;
+      const actorId = request.auth.credentials.id;
+      const { id } = request.params;
 
-    const idemKey =
-      request.headers["idempotency-key"] || request.headers["Idempotency-Key"];
+      // Hapi lowercases all header keys
+      const idemKey = request.headers["idempotency-key"];
 
-    if (!idemKey) {
-      return h
-        .response({
-          status: "fail",
-          message: "Idempotency-Key header is required",
-        })
-        .code(400);
+      if (!idemKey) {
+        return h
+          .response({
+            status: "fail",
+            message: "Idempotency-Key header is required",
+          })
+          .code(400);
+      }
+
+      const result = await this._service.post({
+        organizationId,
+        id,
+        actorId,
+        idempotencyKey: String(idemKey),
+      });
+
+      if (result?.replay) {
+        return h
+          .response(result.responseBody)
+          .code(result.responseStatus || 200);
+      }
+
+      await this._audit.log({
+        organizationId,
+        actorId,
+        action: "journal_entry.post",
+        entity: "journal_entry",
+        entityId: id,
+        before: null,
+        after: result.entry,
+        ip: request.info.remoteAddress,
+        userAgent: request.headers["user-agent"],
+      });
+
+      return h.response({ status: "success", data: result.entry }).code(200);
+    } catch (error) {
+      console.error(error);
+      throw error;
     }
-
-    const result = await this._service.post({
-      organizationId,
-      id,
-      actorId,
-      idempotencyKey: String(idemKey),
-    });
-
-    // replay exact stored response (strong idempotency)
-    if (result?.replay) {
-      return h.response(result.responseBody).code(result.responseStatus || 200);
-    }
-
-    await this._audit.log({
-      organizationId,
-      actorId,
-      action: "journal_entry.post",
-      entity: "journal_entry",
-      entityId: id,
-      before: null,
-      after: result.entry,
-      ip: request.info.remoteAddress,
-      userAgent: request.headers["user-agent"],
-    });
-
-    return h.response({ status: "success", data: result.entry }).code(200);
   }
 
   async reverse(request, h) {

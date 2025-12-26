@@ -1,51 +1,46 @@
 const requireRole = require("../../middlewares/requireRole");
 
 module.exports = (handler) => [
-  // LIST (pagination + filters)
   {
     method: "GET",
-    path: "/v1/journal-entries",
+    path: "/v1/business-partners",
     handler: handler.list,
     options: { pre: [requireRole(["admin", "accountant", "viewer"])] },
   },
-
-  // GET detail (include lines)
   {
     method: "GET",
-    path: "/v1/journal-entries/{id}",
+    path: "/v1/business-partners/options",
+    handler: handler.options,
+    options: { pre: [requireRole(["admin", "accountant", "viewer"])] },
+  },
+  {
+    method: "GET",
+    path: "/v1/business-partners/{id}",
     handler: handler.getById,
     options: { pre: [requireRole(["admin", "accountant", "viewer"])] },
   },
-
-  // CREATE draft
   {
     method: "POST",
-    path: "/v1/journal-entries",
+    path: "/v1/business-partners",
     handler: handler.create,
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
-
-  // EDIT draft
+  {
+    method: "POST",
+    path: "/v1/business-partners/{id}/restore",
+    handler: handler.restoreBusinessPartnerHandler,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
   {
     method: "PUT",
-    path: "/v1/journal-entries/{id}",
+    path: "/v1/business-partners/{id}",
     handler: handler.update,
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
-
-  // POST (idempotent; uses Idempotency-Key header)
   {
-    method: "POST",
-    path: "/v1/journal-entries/{id}/post",
-    handler: handler.post,
-    options: { pre: [requireRole(["admin", "accountant"])] },
-  },
-
-  // REVERSE (create reversing entry)
-  {
-    method: "POST",
-    path: "/v1/journal-entries/{id}/reverse",
-    handler: handler.reverse,
+    method: "DELETE",
+    path: "/v1/business-partners/{id}",
+    handler: handler.remove,
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
 ];

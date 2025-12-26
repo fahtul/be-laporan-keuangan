@@ -3,10 +3,90 @@ const NotFoundError = require("../../exceptions/NotFoundError");
 const InvariantError = require("../../exceptions/InvariantError");
 
 const IDEM_SCOPE_POST = "journal_entries.post";
-
 const toCents = (n) => Math.round(Number(n || 0) * 100);
 
 class JournalEntriesService {
+  // ========== List ==========
+  async list({
+    organizationId,
+    page,
+    limit,
+    q = "",
+    status = "",
+    fromDate = null,
+    toDate = null,
+  }) {
+    const offset = (page - 1) * limit;
+
+    const base = knex("journal_entries as je")
+      .where("je.organization_id", organizationId)
+      .whereNull("je.deleted_at");
+
+    if (status) base.andWhere("je.status", status);
+
+    if (fromDate) base.andWhere("je.date", ">=", fromDate);
+    if (toDate) base.andWhere("je.date", "<=", toDate);
+
+    if (q) {
+      const qq = `%${q}%`;
+      base.andWhere((qb) => {
+        qb.whereILike("je.memo", qq)
+          .orWhereILike("je.id", qq)
+          .orWhereILike("je.status", qq);
+      });
+    }
+
+    const totalRow = await base.clone().count("* as c").first();
+    const total = Number(totalRow?.c ?? 0);
+
+    // aggregate totals per entry
+    const agg = knex("journal_lines as jl")
+      .select("jl.entry_id")
+      .sum({ total_debit: "jl.debit" })
+      .sum({ total_credit: "jl.credit" })
+      .count({ lines_count: "*" })
+      .where("jl.organization_id", organizationId)
+      .whereNull("jl.deleted_at")
+      .groupBy("jl.entry_id")
+      .as("agg");
+
+    const items = await base
+      .clone()
+      .leftJoin(agg, "agg.entry_id", "je.id")
+      .select(
+        "je.id",
+        "je.date",
+        "je.memo",
+        "je.status",
+        "je.posted_at",
+        "je.posted_by",
+        "je.reversal_of_id",
+        "je.created_at",
+        "je.updated_at",
+        knex.raw("COALESCE(agg.total_debit, 0) as total_debit"),
+        knex.raw("COALESCE(agg.total_credit, 0) as total_credit"),
+        knex.raw("COALESCE(agg.lines_count, 0) as lines_count")
+      )
+      .orderBy("je.date", "desc")
+      .orderBy("je.created_at", "desc")
+      .limit(limit)
+      .offset(offset);
+
+    return {
+      items,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        q,
+        status,
+        fromDate,
+        toDate,
+      },
+    };
+  }
+
   // ========== Read ==========
   async getById({ organizationId, id }) {
     const entry = await knex("journal_entries")
@@ -18,6 +98,7 @@ class JournalEntriesService {
         "status",
         "posted_at",
         "posted_by",
+        "reversal_of_id",
         "created_at",
         "updated_at"
       )
@@ -92,13 +173,27 @@ class JournalEntriesService {
       throw new InvariantError("Posted/void journal entries cannot be edited");
     }
 
+    const isReversal = !!before.reversal_of_id;
+    let skipLinesUpdate = false;
+
+    // ✅ Pengaman: reversing entry lines tidak boleh berubah
+    if (isReversal && payload.lines !== undefined) {
+      const same = this._isSameLines(before.lines, payload.lines);
+      if (!same) {
+        throw new InvariantError(
+          "Lines pada reversing entry tidak boleh diubah. Buat journal koreksi baru jika perlu."
+        );
+      }
+      // lines sama persis → kita abaikan update lines (biar tidak terhapus & insert ulang)
+      skipLinesUpdate = true;
+    }
+
     const nextDate = payload.date ?? before.date;
     const nextMemo = payload.memo ?? before.memo;
 
     await knex.transaction(async (trx) => {
       await this._assertPeriodOpen({ organizationId, date: nextDate }, trx);
 
-      // update header
       await trx("journal_entries")
         .where({ organization_id: organizationId, id })
         .whereNull("deleted_at")
@@ -108,8 +203,7 @@ class JournalEntriesService {
           updated_at: trx.fn.now(),
         });
 
-      // replace lines (only if provided)
-      if (payload.lines !== undefined) {
+      if (!skipLinesUpdate && payload.lines !== undefined) {
         const lines = Array.isArray(payload.lines) ? payload.lines : [];
 
         // hard replace (draft only)
@@ -181,7 +275,6 @@ class JournalEntriesService {
           };
         }
 
-        // key exists but no response stored yet -> treat as in progress
         throw new InvariantError("Request is already being processed");
       }
 
@@ -195,9 +288,9 @@ class JournalEntriesService {
       if (!entry) throw new NotFoundError("Journal entry not found");
 
       if (entry.status === "posted") {
-        // already posted -> return success (idempotent behavior)
         const data = await this.getById({ organizationId, id });
         const body = { status: "success", data };
+
         await trx("idempotency_keys")
           .where({
             organization_id: organizationId,
@@ -232,7 +325,7 @@ class JournalEntriesService {
         );
       }
 
-      // 5) validate accounts (must be postable, active, same org)
+      // 5) validate accounts
       await this._assertAccountsValid({ organizationId, lines }, trx);
 
       // 6) balance check
@@ -293,6 +386,7 @@ class JournalEntriesService {
           status: "draft",
           posted_at: null,
           posted_by: null,
+          reversal_of_id: original.id,
           created_at: trx.fn.now(),
           updated_at: trx.fn.now(),
         })
@@ -305,7 +399,6 @@ class JournalEntriesService {
         organization_id: organizationId,
         entry_id: newId,
         account_id: l.account_id,
-        // swap
         debit: l.credit,
         credit: l.debit,
         memo: l.memo ?? null,
@@ -323,10 +416,9 @@ class JournalEntriesService {
         { organizationId, lines: reversedLines },
         trx
       );
-
       await trx("journal_lines").insert(reversedLines);
 
-      payload.__createdId = newId; // internal
+      payload.__createdId = newId;
     });
 
     return this.getById({ organizationId, id: payload.__createdId });
@@ -389,6 +481,160 @@ class JournalEntriesService {
       if (!a.is_active) throw new InvariantError("Account is inactive");
       if (!a.is_postable) throw new InvariantError("Account is not postable");
     }
+  }
+
+  _normalizeLinesForCompare(lines) {
+    const arr = Array.isArray(lines) ? lines : [];
+
+    return (
+      arr
+        .map((l) => ({
+          account_id: String(l.account_id || ""),
+          debit_cents: toCents(l.debit),
+          credit_cents: toCents(l.credit),
+          memo: l.memo === "" || l.memo === undefined ? null : l.memo ?? null,
+        }))
+        // sort biar perbandingan stabil walau urutan beda
+        .sort((a, b) => {
+          const ak = `${a.account_id}|${a.debit_cents}|${a.credit_cents}|${
+            a.memo ?? ""
+          }`;
+          const bk = `${b.account_id}|${b.debit_cents}|${b.credit_cents}|${
+            b.memo ?? ""
+          }`;
+          return ak.localeCompare(bk);
+        })
+    );
+  }
+
+  _isSameLines(aLines, bLines) {
+    const a = this._normalizeLinesForCompare(aLines);
+    const b = this._normalizeLinesForCompare(bLines);
+
+    if (a.length !== b.length) return false;
+
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].account_id !== b[i].account_id) return false;
+      if (a[i].debit_cents !== b[i].debit_cents) return false;
+      if (a[i].credit_cents !== b[i].credit_cents) return false;
+      if ((a[i].memo ?? null) !== (b[i].memo ?? null)) return false;
+    }
+    return true;
+  }
+
+  async getOpeningByKey({ organizationId, openingKey }) {
+    const entry = await knex("journal_entries as je")
+      .select(
+        "je.id",
+        "je.organization_id",
+        "je.date",
+        "je.memo",
+        "je.status",
+        "je.posted_at",
+        "je.posted_by",
+        "je.entry_type",
+        "je.opening_key",
+        "je.source_entry_id", // pastikan kolom ini memang ada (hasil migration)
+        "je.created_at",
+        "je.updated_at"
+      )
+      .where("je.organization_id", organizationId)
+      .whereNull("je.deleted_at")
+      .andWhere("je.entry_type", "opening")
+      .andWhere("je.opening_key", openingKey)
+      .first();
+
+    if (!entry) return null;
+
+    const lines = await knex("journal_lines as jl")
+      .select(
+        "jl.id",
+        "jl.entry_id",
+        "jl.account_id",
+        "jl.debit",
+        "jl.credit",
+        "jl.memo"
+      )
+      .where("jl.organization_id", organizationId)
+      .whereNull("jl.deleted_at")
+      .andWhere("jl.entry_id", entry.id)
+      .orderBy("jl.created_at", "asc");
+
+    return { ...entry, lines };
+  }
+
+  async createOpeningBalance({ organizationId, actorId, payload }) {
+    const date = payload.date;
+    const memo = payload.memo ?? null;
+    const openingKey = String(payload.opening_key || "").trim();
+    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+
+    if (!openingKey) throw new InvariantError("opening_key is required");
+    if (lines.length < 2)
+      throw new InvariantError("Opening balance must have at least 2 lines");
+
+    // cek existing (aplikasi guard) — unique index tetap jadi guard utama
+    const existing = await knex("journal_entries as je")
+      .select("je.id")
+      .where("je.organization_id", organizationId)
+      .whereNull("je.deleted_at")
+      .andWhere("je.entry_type", "opening")
+      .andWhere("je.opening_key", openingKey)
+      .first();
+
+    if (existing) {
+      throw new InvariantError(
+        `Opening balance for "${openingKey}" already exists`
+      );
+    }
+
+    let entryId = null;
+
+    await knex.transaction(async (trx) => {
+      await this._assertPeriodOpen({ organizationId, date }, trx);
+      await this._assertAccountsValid({ organizationId, lines }, trx);
+
+      // harus balance sebelum insert
+      this._assertBalanced(lines);
+
+      // insert header
+      const inserted = await trx("journal_entries")
+        .insert({
+          organization_id: organizationId,
+          date,
+          memo,
+          status: "posted",
+          posted_at: trx.fn.now(),
+          posted_by: actorId,
+          entry_type: "opening",
+          opening_key: openingKey,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning(["id"]); // di PG: [{id}], di MySQL biasanya returning di-ignore dan insert() balikin [id]
+
+      const first = Array.isArray(inserted) ? inserted[0] : inserted;
+      entryId = typeof first === "object" ? first?.id : first;
+
+      if (!entryId)
+        throw new InvariantError("Failed to create opening balance");
+
+      // insert lines
+      const rows = lines.map((l) => ({
+        organization_id: organizationId,
+        entry_id: entryId,
+        account_id: l.account_id,
+        debit: Number(l.debit || 0),
+        credit: Number(l.credit || 0),
+        memo: l.memo ?? null,
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      }));
+
+      await trx("journal_lines").insert(rows);
+    });
+
+    return this.getById({ organizationId, id: entryId });
   }
 }
 

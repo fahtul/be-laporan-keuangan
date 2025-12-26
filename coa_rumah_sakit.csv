@@ -1,0 +1,107 @@
+code;name;type;parent_code;is_postable;normal_balance;is_active
+1000;ASET;asset;;Tidak;debit;Ya
+1100;Aset Lancar;asset;1000;Tidak;debit;Ya
+1110;Kas & Bank;asset;1100;Tidak;debit;Ya
+1111;Kas Kecil;asset;1110;Ya;debit;Ya
+1112;Bank BCA - Operasional;asset;1110;Ya;debit;Ya
+1113;Bank Mandiri - Payroll;asset;1110;Ya;debit;Ya
+1120;Piutang Usaha;asset;1100;Tidak;debit;Ya
+1121;Piutang BPJS Kesehatan;asset;1120;Ya;debit;Ya
+1122;Piutang Asuransi Swasta;asset;1120;Ya;debit;Ya
+1123;Piutang Perusahaan (Corporate);asset;1120;Ya;debit;Ya
+1124;Piutang Pasien Umum;asset;1120;Ya;debit;Ya
+1130;Persediaan;asset;1100;Tidak;debit;Ya
+1131;Persediaan Obat (Farmasi);asset;1130;Ya;debit;Ya
+1132;Persediaan BHP Medis;asset;1130;Ya;debit;Ya
+1133;Persediaan Reagen Laboratorium;asset;1130;Ya;debit;Ya
+1140;Biaya Dibayar Dimuka;asset;1100;Tidak;debit;Ya
+1141;Asuransi Dibayar Dimuka;asset;1140;Ya;debit;Ya
+1142;Sewa Dibayar Dimuka;asset;1140;Ya;debit;Ya
+1143;Kontrak Maintenance Dibayar Dimuka;asset;1140;Ya;debit;Ya
+1150;Aset Lancar Lainnya;asset;1100;Tidak;debit;Ya
+1151;Panjar Karyawan;asset;1150;Ya;debit;Ya
+1152;Uang Jaminan / Deposit;asset;1150;Ya;debit;Ya
+1200;Aset Tidak Lancar;asset;1000;Tidak;debit;Ya
+1210;Aset Tetap;asset;1200;Tidak;debit;Ya
+1211;Tanah;asset;1210;Ya;debit;Ya
+1212;Bangunan;asset;1210;Ya;debit;Ya
+1213;Alat Medis;asset;1210;Ya;debit;Ya
+1214;Peralatan Non Medis;asset;1210;Ya;debit;Ya
+1215;Kendaraan;asset;1210;Ya;debit;Ya
+1216;Perangkat TI;asset;1210;Ya;debit;Ya
+1220;Akumulasi Penyusutan;asset;1200;Tidak;credit;Ya
+1221;Akm Penyusutan Bangunan;asset;1220;Ya;credit;Ya
+1222;Akm Penyusutan Alat Medis;asset;1220;Ya;credit;Ya
+1223;Akm Penyusutan Kendaraan;asset;1220;Ya;credit;Ya
+1230;Aset Tak Berwujud;asset;1200;Tidak;debit;Ya
+1231;Lisensi Software;asset;1230;Ya;debit;Ya
+
+2000;KEWAJIBAN;liability;;Tidak;credit;Ya
+2100;Kewajiban Lancar;liability;2000;Tidak;credit;Ya
+2110;Utang Usaha;liability;2100;Tidak;credit;Ya
+2111;Utang Supplier Obat;liability;2110;Ya;credit;Ya
+2112;Utang Supplier BHP Medis;liability;2110;Ya;credit;Ya
+2113;Utang Supplier Umum;liability;2110;Ya;credit;Ya
+2120;Biaya Masih Harus Dibayar (Akrual);liability;2100;Tidak;credit;Ya
+2121;Gaji Terutang;liability;2120;Ya;credit;Ya
+2122;Jasa Dokter Terutang;liability;2120;Ya;credit;Ya
+2123;Listrik/Air Terutang;liability;2120;Ya;credit;Ya
+2130;Utang Pajak;liability;2100;Tidak;credit;Ya
+2131;PPN Keluaran (Terutang);liability;2130;Ya;credit;Ya
+2132;PPh 21 Terutang;liability;2130;Ya;credit;Ya
+2133;PPh 23 Terutang;liability;2130;Ya;credit;Ya
+2140;Pendapatan Diterima Dimuka / Deposit Pasien;liability;2100;Ya;credit;Ya
+2200;Kewajiban Jangka Panjang;liability;2000;Tidak;credit;Ya
+2211;Pinjaman Bank Jangka Panjang;liability;2200;Ya;credit;Ya
+2212;Liabilitas Sewa (Lease);liability;2200;Ya;credit;Ya
+
+3000;EKUITAS;equity;;Tidak;credit;Ya
+3100;Modal Disetor;equity;3000;Ya;credit;Ya
+3200;Tambahan Modal Disetor;equity;3000;Ya;credit;Ya
+3300;Laba Ditahan;equity;3000;Ya;credit;Ya
+3400;Laba/Rugi Tahun Berjalan;equity;3000;Ya;credit;Ya
+
+4000;PENDAPATAN;revenue;;Tidak;credit;Ya
+4100;Pendapatan Jasa Pelayanan Pasien;revenue;4000;Tidak;credit;Ya
+4110;Pendapatan Rawat Inap;revenue;4100;Ya;credit;Ya
+4120;Pendapatan Rawat Jalan;revenue;4100;Ya;credit;Ya
+4130;Pendapatan IGD;revenue;4100;Ya;credit;Ya
+4140;Pendapatan Kamar Operasi;revenue;4100;Ya;credit;Ya
+4200;Pendapatan Diagnostik;revenue;4000;Tidak;credit;Ya
+4210;Pendapatan Laboratorium;revenue;4200;Ya;credit;Ya
+4220;Pendapatan Radiologi;revenue;4200;Ya;credit;Ya
+4300;Pendapatan Farmasi;revenue;4000;Tidak;credit;Ya
+4310;Penjualan Obat;revenue;4300;Ya;credit;Ya
+4320;Penjualan Alkes/BHP ke Pasien;revenue;4300;Ya;credit;Ya
+4400;Pendapatan Operasional Lainnya;revenue;4000;Tidak;credit;Ya
+4410;Pendapatan Ambulans;revenue;4400;Ya;credit;Ya
+4420;Biaya Administrasi/Pendaftaran;revenue;4400;Ya;credit;Ya
+
+5000;BEBAN;expense;;Tidak;debit;Ya
+5100;Biaya Pelayanan Medis (HPP);expense;5000;Tidak;debit;Ya
+5110;Beban Pemakaian Obat;expense;5100;Ya;debit;Ya
+5120;Beban Pemakaian BHP Medis;expense;5100;Ya;debit;Ya
+5130;Beban Reagen Laboratorium;expense;5100;Ya;debit;Ya
+5200;Beban SDM;expense;5000;Tidak;debit;Ya
+5210;Gaji & Upah;expense;5200;Ya;debit;Ya
+5220;Jasa Dokter;expense;5200;Ya;debit;Ya
+5230;Tunjangan & BPJS Karyawan;expense;5200;Ya;debit;Ya
+5300;Beban Fasilitas & Utilitas;expense;5000;Tidak;debit;Ya
+5310;Listrik;expense;5300;Ya;debit;Ya
+5320;Air;expense;5300;Ya;debit;Ya
+5330;Internet & Telekomunikasi;expense;5300;Ya;debit;Ya
+5340;Pengelolaan Limbah Medis;expense;5300;Ya;debit;Ya
+5400;Beban Pemeliharaan & Perbaikan;expense;5000;Tidak;debit;Ya
+5410;Maintenance Bangunan;expense;5400;Ya;debit;Ya
+5420;Maintenance Alat Medis;expense;5400;Ya;debit;Ya
+5500;Beban Penyusutan & Amortisasi;expense;5000;Tidak;debit;Ya
+5510;Penyusutan Bangunan;expense;5500;Ya;debit;Ya
+5520;Penyusutan Alat Medis;expense;5500;Ya;debit;Ya
+5600;Beban Administrasi & Umum;expense;5000;Tidak;debit;Ya
+5610;ATK;expense;5600;Ya;debit;Ya
+5630;Biaya Bank;expense;5600;Ya;debit;Ya
+5640;Jasa Profesional (Audit/Legal);expense;5600;Ya;debit;Ya
+5660;Asuransi;expense;5600;Ya;debit;Ya
+5690;Pemasaran & Promosi;expense;5600;Ya;debit;Ya
+5700;Beban Sistem & IT;expense;5000;Tidak;debit;Ya
+5710;Langganan Software;expense;5700;Ya;debit;Ya
