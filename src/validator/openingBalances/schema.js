@@ -2,6 +2,7 @@ const Joi = require("joi");
 
 const JournalLineSchema = Joi.object({
   account_id: Joi.string().uuid().required(),
+  bp_id: Joi.string().uuid().allow(null, "").optional(),
   debit: Joi.number().precision(2).min(0).required(),
   credit: Joi.number().precision(2).min(0).required(),
   memo: Joi.string().allow("", null).max(500).optional(),

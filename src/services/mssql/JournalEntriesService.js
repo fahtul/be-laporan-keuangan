@@ -109,7 +109,7 @@ class JournalEntriesService {
     if (!entry) throw new NotFoundError("Journal entry not found");
 
     const lines = await knex("journal_lines")
-      .select("id", "entry_id", "account_id", "debit", "credit", "memo")
+      .select("id", "entry_id", "account_id", "bp_id", "debit", "credit", "memo")
       .where({ organization_id: organizationId, entry_id: id })
       .whereNull("deleted_at")
       .orderBy("created_at", "asc");
@@ -144,11 +144,14 @@ class JournalEntriesService {
 
       if (lines && lines.length > 0) {
         await this._assertAccountsValid({ organizationId, lines }, trx);
+        await this._assertBusinessPartnersValid({ organizationId, lines }, trx);
+        await this._assertBpRequiredByAccounts({ organizationId, lines }, trx);
 
         const rows = lines.map((l) => ({
           organization_id: organizationId,
           entry_id: entryId,
           account_id: l.account_id,
+          bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
           debit: l.debit,
           credit: l.credit,
           memo: l.memo ?? null,
@@ -214,11 +217,14 @@ class JournalEntriesService {
 
         if (lines.length > 0) {
           await this._assertAccountsValid({ organizationId, lines }, trx);
+          await this._assertBusinessPartnersValid({ organizationId, lines }, trx);
+          await this._assertBpRequiredByAccounts({ organizationId, lines }, trx);
 
           const rows = lines.map((l) => ({
             organization_id: organizationId,
             entry_id: id,
             account_id: l.account_id,
+            bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
             debit: l.debit,
             credit: l.credit,
             memo: l.memo ?? null,
@@ -315,7 +321,7 @@ class JournalEntriesService {
 
       // 4) load lines
       const lines = await trx("journal_lines")
-        .select("account_id", "debit", "credit")
+        .select("account_id", "bp_id", "debit", "credit")
         .where({ organization_id: organizationId, entry_id: id })
         .whereNull("deleted_at");
 
@@ -327,6 +333,8 @@ class JournalEntriesService {
 
       // 5) validate accounts
       await this._assertAccountsValid({ organizationId, lines }, trx);
+      await this._assertBusinessPartnersValid({ organizationId, lines }, trx);
+      await this._assertBpRequiredByAccounts({ organizationId, lines }, trx);
 
       // 6) balance check
       this._assertBalanced(lines);
@@ -399,6 +407,7 @@ class JournalEntriesService {
         organization_id: organizationId,
         entry_id: newId,
         account_id: l.account_id,
+        bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
         debit: l.credit,
         credit: l.debit,
         memo: l.memo ?? null,
@@ -413,6 +422,14 @@ class JournalEntriesService {
       }
 
       await this._assertAccountsValid(
+        { organizationId, lines: reversedLines },
+        trx
+      );
+      await this._assertBusinessPartnersValid(
+        { organizationId, lines: reversedLines },
+        trx
+      );
+      await this._assertBpRequiredByAccounts(
         { organizationId, lines: reversedLines },
         trx
       );
@@ -483,6 +500,72 @@ class JournalEntriesService {
     }
   }
 
+  async _assertBusinessPartnersValid({ organizationId, lines }, trx) {
+    const db = trx || knex;
+
+    const ids = Array.from(
+      new Set(
+        (lines || [])
+          .map((l) => (l.bp_id === "" || l.bp_id === undefined ? null : l.bp_id))
+          .filter(Boolean)
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (ids.length === 0) return;
+
+    const rows = await db("business_partners")
+      .select("id")
+      .where({
+        organization_id: organizationId,
+        is_deleted: false,
+        is_active: true,
+      })
+      .whereNull("deleted_at")
+      .whereIn("id", ids);
+
+    if (rows.length !== ids.length) {
+      const found = new Set(rows.map((r) => r.id));
+      const missing = ids.filter((id) => !found.has(id));
+      throw new InvariantError(
+        `Business partner not found: ${missing.slice(0, 10).join(", ")}`
+      );
+    }
+  }
+
+  async _assertBpRequiredByAccounts({ organizationId, lines }, trx) {
+    const db = trx || knex;
+
+    const accountIds = Array.from(
+      new Set((lines || []).map((l) => l.account_id).filter(Boolean))
+    );
+    if (accountIds.length === 0) return;
+
+    const accounts = await db("accounts")
+      .select("id", "code", "requires_bp", "subledger")
+      .where({ organization_id: organizationId })
+      .whereNull("deleted_at")
+      .whereIn("id", accountIds);
+
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+
+    for (const l of lines || []) {
+      const acc = byId.get(l.account_id);
+      if (!acc) continue;
+
+      if (!acc.requires_bp) continue;
+
+      const bpId = l.bp_id ? String(l.bp_id).trim() : "";
+      if (!bpId) {
+        const code = acc.code ? ` (${acc.code})` : "";
+        throw new InvariantError(
+          `Line for account ${acc.id}${code} requires business partner`
+        );
+      }
+    }
+  }
+
   _normalizeLinesForCompare(lines) {
     const arr = Array.isArray(lines) ? lines : [];
 
@@ -490,18 +573,22 @@ class JournalEntriesService {
       arr
         .map((l) => ({
           account_id: String(l.account_id || ""),
+          bp_id:
+            l.bp_id === "" || l.bp_id === undefined
+              ? null
+              : String(l.bp_id || ""),
           debit_cents: toCents(l.debit),
           credit_cents: toCents(l.credit),
           memo: l.memo === "" || l.memo === undefined ? null : l.memo ?? null,
         }))
         // sort biar perbandingan stabil walau urutan beda
         .sort((a, b) => {
-          const ak = `${a.account_id}|${a.debit_cents}|${a.credit_cents}|${
-            a.memo ?? ""
-          }`;
-          const bk = `${b.account_id}|${b.debit_cents}|${b.credit_cents}|${
-            b.memo ?? ""
-          }`;
+          const ak = `${a.account_id}|${a.bp_id ?? ""}|${a.debit_cents}|${
+            a.credit_cents
+          }|${a.memo ?? ""}`;
+          const bk = `${b.account_id}|${b.bp_id ?? ""}|${b.debit_cents}|${
+            b.credit_cents
+          }|${b.memo ?? ""}`;
           return ak.localeCompare(bk);
         })
     );
@@ -515,6 +602,7 @@ class JournalEntriesService {
 
     for (let i = 0; i < a.length; i++) {
       if (a[i].account_id !== b[i].account_id) return false;
+      if ((a[i].bp_id ?? null) !== (b[i].bp_id ?? null)) return false;
       if (a[i].debit_cents !== b[i].debit_cents) return false;
       if (a[i].credit_cents !== b[i].credit_cents) return false;
       if ((a[i].memo ?? null) !== (b[i].memo ?? null)) return false;
@@ -551,6 +639,7 @@ class JournalEntriesService {
         "jl.id",
         "jl.entry_id",
         "jl.account_id",
+        "jl.bp_id",
         "jl.debit",
         "jl.credit",
         "jl.memo"
@@ -593,6 +682,8 @@ class JournalEntriesService {
     await knex.transaction(async (trx) => {
       await this._assertPeriodOpen({ organizationId, date }, trx);
       await this._assertAccountsValid({ organizationId, lines }, trx);
+      await this._assertBusinessPartnersValid({ organizationId, lines }, trx);
+      await this._assertBpRequiredByAccounts({ organizationId, lines }, trx);
 
       // harus balance sebelum insert
       this._assertBalanced(lines);
@@ -624,6 +715,7 @@ class JournalEntriesService {
         organization_id: organizationId,
         entry_id: entryId,
         account_id: l.account_id,
+        bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
         debit: Number(l.debit || 0),
         credit: Number(l.credit || 0),
         memo: l.memo ?? null,

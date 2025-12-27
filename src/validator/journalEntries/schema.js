@@ -1,31 +1,50 @@
 const Joi = require("joi");
 
-const RoleSchema = Joi.string().valid(
-  "customer",
-  "supplier",
-  "patient",
-  "doctor",
-  "insurer",
-  "other"
-);
+const YmdSchema = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required();
 
-const CreateBusinessPartnerSchema = Joi.object({
-  code: Joi.string().max(50).required(), // samakan gaya dengan accounts
-  name: Joi.string().max(200).required(),
+const JournalLineSchema = Joi.object({
+  account_id: Joi.string().uuid().required(),
+  bp_id: Joi.string().uuid().allow(null, "").optional(),
+  debit: Joi.number().precision(2).min(0).required(),
+  credit: Joi.number().precision(2).min(0).required(),
+  memo: Joi.string().allow("", null).max(500).optional(),
+}).custom((value, helpers) => {
+  const debit = Number(value.debit || 0);
+  const credit = Number(value.credit || 0);
 
-  // optional: roles
-  roles: Joi.array().items(RoleSchema).optional(),
+  if (debit > 0 && credit === 0) return value;
+  if (credit > 0 && debit === 0) return value;
 
-  is_active: Joi.boolean().optional(),
+  return helpers.error("any.invalid", {
+    message: "Each line must have either debit > 0 or credit > 0 (not both).",
+  });
+}, "debit/credit exclusive");
+
+const CreateJournalEntrySchema = Joi.object({
+  date: YmdSchema,
+  memo: Joi.string().allow("", null).max(2000).optional(),
+  lines: Joi.array().items(JournalLineSchema).min(2).required(),
 });
 
-const UpdateBusinessPartnerSchema = Joi.object({
-  code: Joi.string().max(50).optional(),
-  name: Joi.string().max(200).optional(),
-
-  roles: Joi.array().items(RoleSchema).optional(),
-
-  is_active: Joi.boolean().optional(),
+const UpdateJournalEntrySchema = Joi.object({
+  date: YmdSchema.optional(),
+  memo: Joi.string().allow("", null).max(2000).optional(),
+  lines: Joi.array().items(JournalLineSchema).min(2).optional(),
 }).min(1);
 
-module.exports = { CreateBusinessPartnerSchema, UpdateBusinessPartnerSchema };
+// currently unused payload for post, keep as empty object schema
+const PostJournalEntrySchema = Joi.object({});
+
+const ReverseJournalEntrySchema = Joi.object({
+  date: YmdSchema.optional(),
+  memo: Joi.string().allow("", null).max(2000).optional(),
+});
+
+module.exports = {
+  JournalLineSchema,
+  CreateJournalEntrySchema,
+  UpdateJournalEntrySchema,
+  PostJournalEntrySchema,
+  ReverseJournalEntrySchema,
+};
+

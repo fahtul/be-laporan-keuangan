@@ -40,6 +40,8 @@ class AccountsService {
         "type",
         "normal_balance",
         "cf_activity",
+        "requires_bp",
+        "subledger",
         "parent_id",
         "is_postable",
         "is_active",
@@ -85,6 +87,8 @@ class AccountsService {
         "type",
         "normal_balance",
         "cf_activity",
+        "requires_bp",
+        "subledger",
         "is_postable"
       )
       .orderBy("code", "asc")
@@ -183,6 +187,12 @@ class AccountsService {
       payload.cf_activity !== undefined && String(payload.cf_activity).trim() !== ""
         ? String(payload.cf_activity).trim()
         : null;
+    const requiresBp =
+      payload.requires_bp !== undefined ? !!payload.requires_bp : false;
+    const subledger =
+      payload.subledger !== undefined && String(payload.subledger).trim() !== ""
+        ? String(payload.subledger).trim()
+        : null;
 
     const id = await knex.transaction(async (trx) => {
       const newIdRow = await trx.raw("SELECT gen_random_uuid() AS id");
@@ -204,6 +214,8 @@ class AccountsService {
           type,
           normal_balance, // ✅ wajib supaya ga null (seed kamu kemarin error karena ini)
           cf_activity: cfActivity,
+          requires_bp: requiresBp,
+          subledger: subledger,
           parent_id: parentId,
           is_postable: payload.is_postable ?? false, // ✅ baru
           is_active: payload.is_active ?? true,
@@ -281,6 +293,14 @@ class AccountsService {
         ? before.cf_activity ?? null
         : String(payload.cf_activity || "").trim() || null;
 
+    const nextRequiresBp =
+      payload.requires_bp === undefined ? !!before.requires_bp : !!payload.requires_bp;
+
+    const nextSubledger =
+      payload.subledger === undefined
+        ? before.subledger ?? null
+        : String(payload.subledger || "").trim() || null;
+
     await knex.transaction(async (trx) => {
       await this._assertParentValid(
         { organizationId, id, parentId: nextParent ?? null },
@@ -319,6 +339,8 @@ class AccountsService {
             parent_id: nextParent ?? null,
 
             cf_activity: nextCfActivity,
+            requires_bp: nextRequiresBp,
+            subledger: nextSubledger,
 
             is_postable:
               typeof payload.is_postable === "boolean"
