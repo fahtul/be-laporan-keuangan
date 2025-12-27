@@ -10,6 +10,8 @@ const BalanceSheetService = require("../services/BalanceSheetService");
 const CashFlowService = require("../services/CashFlowService");
 const WorksheetsService = require("../services/WorksheetsService");
 const EquityStatementService = require("../services/EquityStatementService");
+const SubledgersService = require("../services/SubledgersService");
+const ClosingsService = require("../services/ClosingsService");
 
 // validators (biasanya stateless)
 const AccountsValidator = require("../validator/accounts");
@@ -23,6 +25,8 @@ const BalanceSheetValidator = require("../api/balance-sheet/validator");
 const CashFlowValidator = require("../api/cash-flow/validator");
 const WorksheetsValidator = require("../api/worksheets/validator");
 const EquityStatementValidator = require("../api/equity-statement/validator");
+const SubledgersValidator = require("../api/subledgers/validator");
+const ClosingsValidator = require("../api/closings/validator");
 
 function createContainer() {
   // services dibuat sekali
@@ -39,6 +43,8 @@ function createContainer() {
   const equityStatementService = new EquityStatementService({
     incomeStatementService: incomeStatementService,
   });
+  const subledgersService = new SubledgersService();
+  const closingsService = new ClosingsService();
 
   return {
     // services
@@ -53,6 +59,8 @@ function createContainer() {
     cashFlowService,
     worksheetsService,
     equityStatementService,
+    subledgersService,
+    closingsService,
 
     // validators
     accountsValidator: AccountsValidator,
@@ -66,6 +74,8 @@ function createContainer() {
     cashFlowValidator: CashFlowValidator,
     worksheetsValidator: WorksheetsValidator,
     equityStatementValidator: EquityStatementValidator,
+    subledgersValidator: SubledgersValidator,
+    closingsValidator: ClosingsValidator,
   };
 }
 

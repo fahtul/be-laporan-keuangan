@@ -10,6 +10,8 @@ const balanceSheetPlugin = require("../api/balance-sheet");
 const cashFlowPlugin = require("../api/cash-flow");
 const worksheetsPlugin = require("../api/worksheets");
 const equityStatementPlugin = require("../api/equity-statement");
+const subledgersPlugin = require("../api/subledgers");
+const closingsPlugin = require("../api/closings");
 
 async function registerPlugins(server, container) {
   await server.register([
@@ -107,6 +109,24 @@ async function registerPlugins(server, container) {
       options: {
         service: container.equityStatementService,
         validator: container.equityStatementValidator,
+        auditLogService: container.auditLogService,
+      },
+    },
+
+    {
+      plugin: subledgersPlugin,
+      options: {
+        service: container.subledgersService,
+        validator: container.subledgersValidator,
+        auditLogService: container.auditLogService,
+      },
+    },
+
+    {
+      plugin: closingsPlugin,
+      options: {
+        service: container.closingsService,
+        validator: container.closingsValidator,
         auditLogService: container.auditLogService,
       },
     },
