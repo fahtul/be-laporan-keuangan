@@ -39,6 +39,7 @@ class AccountsService {
         "name",
         "type",
         "normal_balance",
+        "cf_activity",
         "parent_id",
         "is_postable",
         "is_active",
@@ -77,7 +78,15 @@ class AccountsService {
     }
 
     return base
-      .select("id", "code", "name", "type", "normal_balance", "is_postable")
+      .select(
+        "id",
+        "code",
+        "name",
+        "type",
+        "normal_balance",
+        "cf_activity",
+        "is_postable"
+      )
       .orderBy("code", "asc")
       .limit(Math.min(Number(limit) || 20, 50));
   }
@@ -170,6 +179,10 @@ class AccountsService {
   async create({ organizationId, payload }) {
     const type = payload.type;
     const normal_balance = normalBalanceByType(type);
+    const cfActivity =
+      payload.cf_activity !== undefined && String(payload.cf_activity).trim() !== ""
+        ? String(payload.cf_activity).trim()
+        : null;
 
     const id = await knex.transaction(async (trx) => {
       const newIdRow = await trx.raw("SELECT gen_random_uuid() AS id");
@@ -190,6 +203,7 @@ class AccountsService {
           name: payload.name,
           type,
           normal_balance, // ✅ wajib supaya ga null (seed kamu kemarin error karena ini)
+          cf_activity: cfActivity,
           parent_id: parentId,
           is_postable: payload.is_postable ?? false, // ✅ baru
           is_active: payload.is_active ?? true,
@@ -262,6 +276,11 @@ class AccountsService {
     const nextParent =
       payload.parent_id === undefined ? before.parent_id : payload.parent_id;
 
+    const nextCfActivity =
+      payload.cf_activity === undefined
+        ? before.cf_activity ?? null
+        : String(payload.cf_activity || "").trim() || null;
+
     await knex.transaction(async (trx) => {
       await this._assertParentValid(
         { organizationId, id, parentId: nextParent ?? null },
@@ -298,6 +317,8 @@ class AccountsService {
             normal_balance: nextNormal,
 
             parent_id: nextParent ?? null,
+
+            cf_activity: nextCfActivity,
 
             is_postable:
               typeof payload.is_postable === "boolean"

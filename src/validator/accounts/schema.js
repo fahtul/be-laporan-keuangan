@@ -1,5 +1,9 @@
 const Joi = require("joi");
 
+const CfActivitySchema = Joi.string()
+  .valid("cash", "operating", "investing", "financing")
+  .optional();
+
 const CreateAccountSchema = Joi.object({
   code: Joi.string().max(50).required(),
   name: Joi.string().max(200).required(),
@@ -10,6 +14,7 @@ const CreateAccountSchema = Joi.object({
   parent_id: Joi.string().uuid().allow(null, "").optional(),
   is_active: Joi.boolean().optional(),
   is_postable: Joi.boolean().optional(),
+  cf_activity: CfActivitySchema.allow(null, ""),
 });
 
 const UpdateAccountSchema = Joi.object({
@@ -22,6 +27,7 @@ const UpdateAccountSchema = Joi.object({
   parent_id: Joi.string().uuid().allow(null, "").optional(),
   is_active: Joi.boolean().optional(),
   is_postable: Joi.boolean().optional(),
+  cf_activity: CfActivitySchema.allow(null, ""),
 }).min(1);
 
 module.exports = { CreateAccountSchema, UpdateAccountSchema };

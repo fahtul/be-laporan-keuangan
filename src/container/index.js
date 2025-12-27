@@ -7,6 +7,7 @@ const LedgersService = require("../services/mssql/LedgersService");
 const TrialBalanceService = require("../services/TrialBalanceService");
 const IncomeStatementService = require("../services/IncomeStatementService");
 const BalanceSheetService = require("../services/BalanceSheetService");
+const CashFlowService = require("../services/CashFlowService");
 
 // validators (biasanya stateless)
 const AccountsValidator = require("../validator/accounts");
@@ -17,6 +18,7 @@ const LedgersValidator = require("../validator/ledgers");
 const TrialBalanceValidator = require("../validator/trialBalance");
 const IncomeStatementValidator = require("../validator/incomeStatement");
 const BalanceSheetValidator = require("../api/balance-sheet/validator");
+const CashFlowValidator = require("../api/cash-flow/validator");
 
 function createContainer() {
   // services dibuat sekali
@@ -28,6 +30,7 @@ function createContainer() {
   const trialBalanceService = new TrialBalanceService();
   const incomeStatementService = new IncomeStatementService();
   const balanceSheetService = new BalanceSheetService();
+  const cashFlowService = new CashFlowService();
 
   return {
     // services
@@ -39,6 +42,7 @@ function createContainer() {
     trialBalanceService,
     incomeStatementService,
     balanceSheetService,
+    cashFlowService,
 
     // validators
     accountsValidator: AccountsValidator,
@@ -49,6 +53,7 @@ function createContainer() {
     trialBalanceValidator: TrialBalanceValidator,
     incomeStatementValidator: IncomeStatementValidator,
     balanceSheetValidator: BalanceSheetValidator,
+    cashFlowValidator: CashFlowValidator,
   };
 }
 
