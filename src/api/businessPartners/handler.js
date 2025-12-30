@@ -1,4 +1,5 @@
 const autoBind = require("auto-bind");
+const InvariantError = require("../../exceptions/InvariantError");
 
 class BusinessPartnersHandler {
   constructor(service, validator, auditLogService) {
@@ -16,6 +17,7 @@ class BusinessPartnersHandler {
       const page = Number(request.query.page ?? 1);
       const limit = Number(request.query.limit ?? 20);
       const q = (request.query.q ?? "").toString().trim();
+      const category = (request.query.category ?? "").toString().trim();
 
       const includeInactive =
         String(request.query.include_inactive ?? "false") === "true";
@@ -31,6 +33,7 @@ class BusinessPartnersHandler {
         page,
         limit,
         q,
+        category,
         includeInactive,
       });
 
@@ -50,6 +53,7 @@ class BusinessPartnersHandler {
 
     const q = (request.query.q ?? "").toString().trim();
     const limit = Number(request.query.limit ?? 20);
+    const category = (request.query.category ?? "").toString().trim();
     const includeInactive =
       String(request.query.include_inactive ?? "false") === "true";
 
@@ -57,6 +61,7 @@ class BusinessPartnersHandler {
       orgId,
       q,
       limit,
+      category,
       includeInactive,
     });
 
@@ -140,6 +145,75 @@ class BusinessPartnersHandler {
             error_code: "BP_CODE_EXISTS",
           })
           .code(409);
+      }
+
+      throw err;
+    }
+  }
+
+  async importBusinessPartners(request, h) {
+    this._validator.validateImport(request.payload || {});
+
+    const organizationId = request.auth.credentials.organizationId;
+    const actorId = request.auth.credentials.id;
+
+    try {
+      const result = await this._service.importBusinessPartners({
+        organizationId,
+        payload: request.payload || {},
+      });
+
+      if (this._audit?.log) {
+        await this._audit.log({
+          organizationId,
+          actorId,
+          action: "business_partner.import",
+          entity: "business_partner",
+          entityId: null,
+          before: null,
+          after: {
+            created: result.created,
+            updated: result.updated,
+            skipped: result.skipped,
+            mode: result.mode,
+            source: result.source,
+            template: result.template || null,
+          },
+          ip: request.info.remoteAddress,
+          userAgent: request.headers["user-agent"],
+        });
+      }
+
+      return h
+        .response({
+          status: "success",
+          data: result,
+        })
+        .code(200);
+    } catch (err) {
+      // insert_only duplicate existing in DB => 409
+      if (err instanceof InvariantError && err.statusCode === 409) {
+        return h
+          .response({
+            status: "fail",
+            message: err.message,
+            error_code: "BP_CODE_EXISTS",
+          })
+          .code(409);
+      }
+
+      // duplicate in payload => 400
+      if (
+        err instanceof InvariantError &&
+        String(err?.message || "").toLowerCase().includes("duplicate code in payload")
+      ) {
+        return h
+          .response({
+            status: "fail",
+            message: err.message,
+            error_code: "BP_DUPLICATE_IN_PAYLOAD",
+          })
+          .code(400);
       }
 
       throw err;

@@ -27,6 +27,12 @@ module.exports = (handler) => [
   },
   {
     method: "POST",
+    path: "/v1/business-partners/import",
+    handler: handler.importBusinessPartners,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
+  {
+    method: "POST",
     path: "/v1/business-partners/{id}/restore",
     handler: handler.restoreBusinessPartnerHandler,
     options: { pre: [requireRole(["admin", "accountant"])] },

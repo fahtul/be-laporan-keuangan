@@ -559,7 +559,9 @@ class JournalEntriesService {
       const acc = byId.get(l.account_id);
       if (!acc) continue;
 
-      if (!acc.requires_bp) continue;
+      const sub = String(acc.subledger || "").trim().toLowerCase();
+      const requires = !!acc.requires_bp || sub === "ar" || sub === "ap";
+      if (!requires) continue;
 
       const bpId = l.bp_id ? String(l.bp_id).trim() : "";
       if (!bpId) {
