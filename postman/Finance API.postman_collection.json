@@ -1,0 +1,477 @@
+{
+  "info": {
+    "name": "Finance API (Hapi + Knex)",
+    "description": "Auto-generated collection for this repo. Set {{baseUrl}} and {{token}} (BFF JWT) in the environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health & Debug",
+      "item": [
+        {
+          "name": "Health Check (No Auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/test"
+          }
+        },
+        {
+          "name": "Me (Auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/me"
+          }
+        },
+        {
+          "name": "Auth Check (Auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/auth-check"
+          }
+        },
+        {
+          "name": "RBAC Admin Only (Auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/rbac/admin-only"
+          }
+        },
+        {
+          "name": "Audit Test (Auth)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/audit-test"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accounts (COA)",
+      "item": [
+        {
+          "name": "List Accounts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/accounts?page={{page}}&limit={{limit}}&q={{q}}&include_inactive={{includeInactive}}"
+          }
+        },
+        {
+          "name": "Account Options",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/accounts/options?q={{q}}&limit={{limit}}&include_inactive={{includeInactive}}"
+          }
+        },
+        {
+          "name": "Get Account By ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/accounts/{{accountId}}"
+          }
+        },
+        {
+          "name": "Create Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"1101\",\n  \"name\": \"Kas (Demo)\",\n  \"type\": \"asset\",\n  \"parent_id\": null,\n  \"is_postable\": true,\n  \"is_active\": true,\n  \"requires_bp\": false,\n  \"subledger\": null\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/accounts"
+          }
+        },
+        {
+          "name": "Import Accounts (COA)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"upsert\",\n  \"accounts\": [\n    {\n      \"code\": \"1000\",\n      \"name\": \"ASET\",\n      \"type\": \"asset\",\n      \"parent_code\": null,\n      \"is_postable\": false,\n      \"cash_flow_category\": null,\n      \"requires_bp\": false,\n      \"subledger\": null\n    },\n    {\n      \"code\": \"1100\",\n      \"name\": \"Kas & Bank\",\n      \"type\": \"asset\",\n      \"parent_code\": \"1000\",\n      \"is_postable\": false,\n      \"cash_flow_category\": \"cash\",\n      \"requires_bp\": false,\n      \"subledger\": null\n    },\n    {\n      \"code\": \"1120\",\n      \"name\": \"Bank\",\n      \"type\": \"asset\",\n      \"parent_code\": \"1100\",\n      \"is_postable\": true,\n      \"cash_flow_category\": \"cash\",\n      \"requires_bp\": false,\n      \"subledger\": null\n    },\n    {\n      \"code\": \"1130\",\n      \"name\": \"Piutang Usaha\",\n      \"type\": \"asset\",\n      \"parent_code\": \"1100\",\n      \"is_postable\": true,\n      \"cash_flow_category\": null,\n      \"requires_bp\": true,\n      \"subledger\": \"AR\"\n    }\n  ]\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/accounts/import"
+          }
+        },
+        {
+          "name": "Restore Account (Soft Deleted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/v1/accounts/{{accountId}}/restore"
+          }
+        },
+        {
+          "name": "Update Account",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Kas (Demo Updated)\",\n  \"is_postable\": true,\n  \"is_active\": true,\n  \"requires_bp\": false,\n  \"subledger\": null\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/accounts/{{accountId}}"
+          }
+        },
+        {
+          "name": "Delete Account (Soft Delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/accounts/{{accountId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business Partners",
+      "item": [
+        {
+          "name": "List Business Partners",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/business-partners?page={{page}}&limit={{limit}}&q={{q}}&include_inactive={{includeInactive}}"
+          }
+        },
+        {
+          "name": "Business Partner Options",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/business-partners/options?q={{q}}&limit={{limit}}&include_inactive={{includeInactive}}"
+          }
+        },
+        {
+          "name": "Get Business Partner By ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/business-partners/{{bpId}}"
+          }
+        },
+        {
+          "name": "Create Business Partner",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"CUST-001\",\n  \"name\": \"Customer Demo\",\n  \"category\": \"customer\",\n  \"normal_balance\": \"debit\",\n  \"is_active\": true\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/business-partners"
+          }
+        },
+        {
+          "name": "Restore Business Partner (Soft Deleted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/v1/business-partners/{{bpId}}/restore"
+          }
+        },
+        {
+          "name": "Update Business Partner",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Customer Demo Updated\",\n  \"is_active\": true\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/business-partners/{{bpId}}"
+          }
+        },
+        {
+          "name": "Delete Business Partner (Soft Delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/business-partners/{{bpId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Journal Entries",
+      "item": [
+        {
+          "name": "List Journal Entries",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/journal-entries?page={{page}}&limit={{limit}}&q={{q}}&status={{jeStatus}}&from_date={{fromDate}}&to_date={{toDate}}"
+          }
+        },
+        {
+          "name": "Get Journal Entry By ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/journal-entries/{{journalEntryId}}"
+          }
+        },
+        {
+          "name": "Create Journal Entry (Draft)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{fromDate}}\",\n  \"memo\": \"JE Demo\",\n  \"lines\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"bp_id\": null,\n      \"debit\": 1000,\n      \"credit\": 0,\n      \"memo\": \"Line debit\"\n    },\n    {\n      \"account_id\": \"{{counterAccountId}}\",\n      \"bp_id\": null,\n      \"debit\": 0,\n      \"credit\": 1000,\n      \"memo\": \"Line credit\"\n    }\n  ]\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/journal-entries"
+          },
+          "description": "Note: if your src/validator/journalEntries/schema.js is currently wrong, this endpoint may fail validation even if the service supports this payload."
+        },
+        {
+          "name": "Update Journal Entry (Draft)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memo\": \"JE Demo Updated\",\n  \"lines\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"bp_id\": null,\n      \"debit\": 2000,\n      \"credit\": 0,\n      \"memo\": \"Line debit\"\n    },\n    {\n      \"account_id\": \"{{counterAccountId}}\",\n      \"bp_id\": null,\n      \"debit\": 0,\n      \"credit\": 2000,\n      \"memo\": \"Line credit\"\n    }\n  ]\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/journal-entries/{{journalEntryId}}"
+          }
+        },
+        {
+          "name": "Post Journal Entry (Idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "url": "{{baseUrl}}/v1/journal-entries/{{journalEntryId}}/post"
+          }
+        },
+        {
+          "name": "Reverse Journal Entry (Create Reversing Entry)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{toDate}}\",\n  \"memo\": \"Reverse JE\"\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/journal-entries/{{journalEntryId}}/reverse"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Opening Balances",
+      "item": [
+        {
+          "name": "Get Opening Balance By Key",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/opening-balances?opening_key={{openingKey}}"
+          }
+        },
+        {
+          "name": "Create Opening Balance (Posted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{fromDate}}\",\n  \"memo\": \"Opening balance\",\n  \"opening_key\": \"{{openingKey}}\",\n  \"lines\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"debit\": 100000,\n      \"credit\": 0,\n      \"memo\": \"Opening debit\"\n    },\n    {\n      \"account_id\": \"{{counterAccountId}}\",\n      \"debit\": 0,\n      \"credit\": 100000,\n      \"memo\": \"Opening credit\"\n    }\n  ]\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/opening-balances"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ledgers",
+      "item": [
+        {
+          "name": "Get Ledger (Running Balance)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/ledgers?account_id={{accountId}}&from_date={{fromDate}}&to_date={{toDate}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "Trial Balance (Neraca Saldo)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/trial-balance?from_date={{fromDate}}&to_date={{toDate}}&include_zero={{includeZero}}&include_header={{includeHeader}}"
+          }
+        },
+        {
+          "name": "Income Statement (Laba Rugi)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/income-statement?from_date={{fromDate}}&to_date={{toDate}}&include_zero={{includeZero}}&include_header={{includeHeader}}&grouping={{incomeGrouping}}&tax_rate={{taxRate}}"
+          }
+        },
+        {
+          "name": "Balance Sheet (Neraca)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/balance-sheet?as_of={{asOf}}&year={{year}}&include_zero={{includeZero}}&include_header={{includeHeader}}&profit_basis={{profitBasis}}"
+          }
+        },
+        {
+          "name": "Cash Flow (Arus Kas)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/cash-flow?from_date={{fromDate}}&to_date={{toDate}}&include_zero={{includeZero}}&include_details={{includeDetails}}&cash_prefix={{cashPrefix}}"
+          }
+        },
+        {
+          "name": "Worksheets (Neraca Lajur)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/worksheets?from_date={{fromDate}}&to_date={{toDate}}&include_zero={{includeZero}}&include_header={{includeHeader}}&use_code_rule={{useCodeRule}}&include_virtual_profit={{includeVirtualProfit}}"
+          }
+        },
+        {
+          "name": "Equity Statement (Perubahan Ekuitas)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/equity-statement?from_date={{fromDate}}&to_date={{toDate}}&include_zero={{includeZero}}&include_header={{includeHeader}}&use_code_rule={{useCodeRule}}&include_virtual_profit={{includeVirtualProfit}}&profit_mode={{profitMode}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subledgers (Buku Pembantu)",
+      "item": [
+        {
+          "name": "Subledger Summary by BP",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/subledgers?from_date={{fromDate}}&to_date={{toDate}}&account_id={{subledgerAccountId}}&q={{q}}&include_zero={{includeZero}}&page={{page}}&limit={{limit}}"
+          }
+        },
+        {
+          "name": "Subledger Detail for BP",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/subledgers/{{bpId}}?from_date={{fromDate}}&to_date={{toDate}}&account_id={{subledgerAccountId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Closings (Year-End)",
+      "item": [
+        {
+          "name": "Year-End Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/closings/year-end?year={{year}}"
+          }
+        },
+        {
+          "name": "Run Year-End Closing",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"year\": \"{{year}}\",\n  \"date\": \"{{asOf}}\",\n  \"memo\": \"Year-end closing {{year}}\",\n  \"retained_earnings_account_id\": \"{{retainedEarningsAccountId}}\",\n  \"generate_opening\": \"0\"\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/v1/closings/year-end"
+          }
+        }
+      ]
+    }
+  ]
+}

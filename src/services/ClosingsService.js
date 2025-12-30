@@ -105,6 +105,11 @@ class ClosingsService {
       throw new InvariantError("date must be within the given year");
     }
 
+    // Order of operations (atomic in one transaction):
+    // 1) create closing entry
+    // 2) insert closing lines
+    // 3) lock period (accounting_period_locks)
+    // 4) optional: generate opening next year
     return knex.transaction(async (trx) => {
       // Guard: existing closing for the year
       const existingClosing = await trx("journal_entries as je")
@@ -299,6 +304,37 @@ class ClosingsService {
         }))
       );
 
+      // Lock the closed period to prevent any further posting inside the closed range.
+      // Overlap check: any closed lock that overlaps [periodStart..periodEnd] blocks closing.
+      const periodStart = fromDate; // `${year}-01-01`
+      const periodEnd = toDate;
+
+      const overlappingLock = await trx("accounting_period_locks as pl")
+        .select("pl.id", "pl.period_start", "pl.period_end")
+        .where("pl.organization_id", organizationId)
+        .whereNull("pl.deleted_at")
+        .andWhere("pl.is_closed", true)
+        .andWhere("pl.period_start", "<=", periodEnd)
+        .andWhere("pl.period_end", ">=", periodStart)
+        .first();
+
+      if (overlappingLock) {
+        throw new InvariantError("Period already locked/closed");
+      }
+
+      await trx("accounting_period_locks").insert({
+        id: crypto.randomUUID(),
+        organization_id: organizationId,
+        period_start: periodStart,
+        period_end: periodEnd,
+        is_closed: true,
+        closed_at: now,
+        closed_by: actorId,
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+      });
+
       let openingEntryId = null;
       let openingLinesCount = 0;
 
@@ -421,4 +457,3 @@ class ClosingsService {
 }
 
 module.exports = ClosingsService;
-

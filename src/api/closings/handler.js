@@ -10,9 +10,9 @@ class ClosingsHandler {
 
   async getYearEndStatus(request, h) {
     const organizationId = request.auth.credentials.organizationId;
-    this._validator.validateStatusQuery(request.query);
+    const query = this._validator.validateStatusQuery(request.query);
 
-    const year = String(request.query.year || "").trim();
+    const year = String(query.year || "").trim();
 
     const data = await this._service.getYearEndStatus({ organizationId, year });
     return h.response({ status: "success", data }).code(200);
@@ -22,9 +22,7 @@ class ClosingsHandler {
     const organizationId = request.auth.credentials.organizationId;
     const actorId = request.auth.credentials.id;
 
-    this._validator.validateRunPayload(request.payload || {});
-
-    const payload = request.payload || {};
+    const payload = this._validator.validateRunPayload(request.payload || {});
 
     const year = String(payload.year || "").trim();
     const date = payload.date ? String(payload.date).trim() : null;
@@ -32,8 +30,7 @@ class ClosingsHandler {
     const retainedEarningsAccountId = String(
       payload.retained_earnings_account_id || ""
     ).trim();
-    const generateOpening =
-      payload.generate_opening === undefined ? true : !!payload.generate_opening;
+    const generateOpening = payload.generate_opening;
 
     const data = await this._service.runYearEndClosing({
       organizationId,
@@ -64,4 +61,3 @@ class ClosingsHandler {
 }
 
 module.exports = ClosingsHandler;
-

@@ -98,6 +98,7 @@ class JournalEntriesService {
         "status",
         "posted_at",
         "posted_by",
+        "entry_type",
         "reversal_of_id",
         "created_at",
         "updated_at"
@@ -378,10 +379,14 @@ class JournalEntriesService {
       throw new InvariantError("Only posted entries can be reversed");
     }
 
+    if (original.entry_type === "closing" || original.entry_type === "opening") {
+      throw new InvariantError("Closing/Opening entries cannot be reversed");
+    }
+
     const reverseDate = payload?.date ?? original.date;
     const reverseMemo =
       payload?.memo ??
-      `Reversal of ${original.id}${original.memo ? ` — ${original.memo}` : ""}`;
+      `Reversal of ${original.id}${original.memo ? ` - ${original.memo}` : ""}`;
 
     await knex.transaction(async (trx) => {
       await this._assertPeriodOpen({ organizationId, date: reverseDate }, trx);

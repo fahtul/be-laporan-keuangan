@@ -19,7 +19,7 @@ class AccountsHandler {
     const includeInactive =
       String(request.query.include_inactive ?? "false") === "true";
 
-    if (page < 1 || limit < 1 || limit > 100) {
+    if (page < 1 || limit < 1 || limit > 1000) {
       return h
         .response({ status: "fail", message: "Invalid pagination" })
         .code(400);
@@ -229,20 +229,31 @@ class AccountsHandler {
       .code(200);
   }
 
-  async findByCodeAny({ organizationId, code }) {
-    return this._db("accounts")
-      .select(
-        "id",
-        "code",
-        "name",
-        "type",
-        "parent_id",
-        "is_postable",
-        "is_deleted",
-        "deleted_at"
-      )
-      .where({ organization_id: organizationId, code })
-      .first();
+  async importAccounts(request, h) {
+    const organizationId = request.auth.credentials.organizationId;
+    const actorId = request.auth.credentials.id;
+
+    const payload = this._validator.validateImport(request.payload || {});
+
+    const result = await this._service.import({
+      orgId: organizationId,
+      mode: payload.mode,
+      accounts: payload.accounts,
+    });
+
+    await this._audit.log({
+      organizationId,
+      actorId,
+      action: "account.import",
+      entity: "account",
+      entityId: null,
+      before: null,
+      after: result,
+      ip: request.info.remoteAddress,
+      userAgent: request.headers["user-agent"],
+    });
+
+    return h.response({ status: "success", data: result }).code(200);
   }
 }
 

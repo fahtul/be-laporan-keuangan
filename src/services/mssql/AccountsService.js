@@ -1,10 +1,22 @@
 const knex = require("../../database/knex");
 const NotFoundError = require("../../exceptions/NotFoundError");
 const InvariantError = require("../../exceptions/InvariantError");
+const { randomUUID } = require("node:crypto");
 
 const normalBalanceByType = (type) => {
   if (type === "asset" || type === "expense") return "debit";
   return "credit";
+};
+
+const normalizeNullableString = (value) => {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  return s === "" ? null : s;
+};
+
+const normalizeNullableBoolean = (value, defaultValue = false) => {
+  if (value === undefined || value === null) return defaultValue;
+  return !!value;
 };
 
 class AccountsService {
@@ -375,6 +387,209 @@ class AccountsService {
 
     const after = await this.getById({ organizationId, id });
     return { before, after };
+  }
+
+  async import({ orgId, mode = "upsert", accounts }) {
+    const normalizedAccounts = (accounts || []).map((account) => {
+      const code = normalizeNullableString(account.code);
+      const name = normalizeNullableString(account.name);
+      const type = normalizeNullableString(account.type);
+      const parent_code = normalizeNullableString(account.parent_code);
+
+      const cashFlowCategory = normalizeNullableString(account.cash_flow_category);
+      const cf_activity = cashFlowCategory;
+
+      const subledgerRaw = normalizeNullableString(account.subledger);
+      const subledger = subledgerRaw ? subledgerRaw.toLowerCase() : null;
+
+      const requiresBpFromPayload = normalizeNullableBoolean(account.requires_bp, false);
+      const requires_bp = subledger === "ar" || subledger === "ap" ? true : requiresBpFromPayload;
+
+      const is_postable =
+        account.is_postable === undefined ? false : !!account.is_postable;
+
+      return {
+        code,
+        name,
+        type,
+        parent_code: parent_code || null,
+        is_postable,
+        cf_activity: cf_activity || null,
+        requires_bp,
+        subledger: subledger || null,
+        normal_balance: normalBalanceByType(type),
+      };
+    });
+
+    const codes = normalizedAccounts.map((a) => a.code);
+    const duplicates = codes.filter(
+      (code, idx) => codes.indexOf(code) !== idx
+    );
+    if (duplicates.length > 0) {
+      throw new InvariantError(
+        `Duplicate account code in payload: ${Array.from(new Set(duplicates)).join(", ")}`
+      );
+    }
+
+    const codeSet = new Set(codes);
+
+    for (const acc of normalizedAccounts) {
+      if (acc.parent_code && acc.parent_code === acc.code) {
+        throw new InvariantError(
+          `Invalid parent_code for account ${acc.code}: cannot be self`
+        );
+      }
+    }
+
+    const parentByCode = new Map(
+      normalizedAccounts.map((a) => [a.code, a.parent_code])
+    );
+    const visiting = new Set();
+    const visited = new Set();
+
+    const visit = (code) => {
+      if (visited.has(code)) return;
+      if (visiting.has(code)) {
+        throw new InvariantError("Invalid parent_code: cycle detected in payload");
+      }
+
+      visiting.add(code);
+      const parentCode = parentByCode.get(code);
+      if (parentCode && codeSet.has(parentCode)) visit(parentCode);
+      visiting.delete(code);
+      visited.add(code);
+    };
+
+    for (const code of codeSet) visit(code);
+
+    return knex.transaction(async (trx) => {
+      const parentCodes = normalizedAccounts
+        .map((a) => a.parent_code)
+        .filter(Boolean);
+
+      const allCodes = Array.from(new Set([...codes, ...parentCodes]));
+
+      const existingRows = await trx("accounts")
+        .select("id", "code", "deleted_at")
+        .where({ organization_id: orgId })
+        .whereIn("code", allCodes);
+
+      const existingByCode = new Map(existingRows.map((r) => [r.code, r]));
+
+      // validate parent_code exists (payload or DB, and not soft-deleted)
+      for (const acc of normalizedAccounts) {
+        if (!acc.parent_code) continue;
+
+        if (codeSet.has(acc.parent_code)) continue;
+
+        const parentRow = existingByCode.get(acc.parent_code);
+        if (!parentRow || parentRow.deleted_at) {
+          throw new InvariantError(
+            `parent_code not found for account ${acc.code}: ${acc.parent_code}`
+          );
+        }
+      }
+
+      let created = 0;
+      let updated = 0;
+      const skipped = 0;
+
+      // step 1: upsert/insert without parent_id
+      for (const acc of normalizedAccounts) {
+        const existing = existingByCode.get(acc.code);
+
+        if (!existing) {
+          await trx("accounts").insert({
+            id: randomUUID(),
+            organization_id: orgId,
+            code: acc.code,
+            name: acc.name,
+            type: acc.type,
+            normal_balance: acc.normal_balance,
+            cf_activity: acc.cf_activity,
+            requires_bp: acc.requires_bp,
+            subledger: acc.subledger,
+            parent_id: null,
+            is_postable: acc.is_postable,
+            is_active: true,
+            created_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+          });
+          created += 1;
+          continue;
+        }
+
+        if (existing.deleted_at) {
+          const ie = new InvariantError(
+            `Account code already exists but is soft-deleted: ${acc.code}`
+          );
+          ie.statusCode = 409;
+          ie.error_code = "ACCOUNT_SOFT_DELETED";
+          throw ie;
+        }
+
+        if (mode === "insert_only") {
+          const ie = new InvariantError(
+            `Account code already exists in this organization: ${acc.code}`
+          );
+          ie.statusCode = 409;
+          ie.error_code = "ACCOUNT_CODE_EXISTS";
+          throw ie;
+        }
+
+        await trx("accounts")
+          .where({ organization_id: orgId, code: acc.code })
+          .whereNull("deleted_at")
+          .update({
+            name: acc.name,
+            type: acc.type,
+            normal_balance: acc.normal_balance,
+            cf_activity: acc.cf_activity,
+            requires_bp: acc.requires_bp,
+            subledger: acc.subledger,
+            is_postable: acc.is_postable,
+            updated_at: trx.fn.now(),
+          });
+        updated += 1;
+      }
+
+      // step 2: map code -> id for payload + parent refs
+      const codeToIdRows = await trx("accounts")
+        .select("id", "code")
+        .where({ organization_id: orgId })
+        .whereIn("code", allCodes)
+        .whereNull("deleted_at");
+
+      const codeToId = new Map(codeToIdRows.map((r) => [r.code, r.id]));
+
+      // step 3: set parent_id based on parent_code
+      for (const acc of normalizedAccounts) {
+        const id = codeToId.get(acc.code);
+        const parentId = acc.parent_code ? codeToId.get(acc.parent_code) : null;
+
+        if (!id) {
+          throw new InvariantError(`Account not found after import: ${acc.code}`);
+        }
+
+        if (acc.parent_code && !parentId) {
+          throw new InvariantError(
+            `parent_code not found after import for account ${acc.code}: ${acc.parent_code}`
+          );
+        }
+
+        await this._assertParentValid(
+          { organizationId: orgId, id, parentId: parentId ?? null },
+          trx
+        );
+
+        await trx("accounts")
+          .where({ organization_id: orgId, id })
+          .whereNull("deleted_at")
+          .update({ parent_id: parentId ?? null, updated_at: trx.fn.now() });
+      }
+
+      return { created, updated, skipped };
+    });
   }
 
   async findByCodeAny({ organizationId, code }, trx = null) {

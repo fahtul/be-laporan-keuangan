@@ -1,5 +1,9 @@
 const InvariantError = require("../../exceptions/InvariantError");
-const { CreateAccountSchema, UpdateAccountSchema } = require("./schema");
+const {
+  CreateAccountSchema,
+  UpdateAccountSchema,
+  ImportAccountsSchema,
+} = require("./schema");
 
 module.exports = {
   validateCreate(payload) {
@@ -9,5 +13,15 @@ module.exports = {
   validateUpdate(payload) {
     const { error } = UpdateAccountSchema.validate(payload);
     if (error) throw new InvariantError(error.message);
+  },
+  validateImport(payload) {
+    const { value, error } = ImportAccountsSchema.validate(payload, {
+      abortEarly: true,
+      allowUnknown: false,
+      convert: true,
+      stripUnknown: true,
+    });
+    if (error) throw new InvariantError(error.message);
+    return value;
   },
 };

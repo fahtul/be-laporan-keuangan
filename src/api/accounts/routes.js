@@ -25,6 +25,12 @@ module.exports = (handler) => [
     handler: handler.create,
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
+  {
+    method: "POST",
+    path: "/v1/accounts/import",
+    handler: handler.importAccounts,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
 
   {
     method: "POST",

@@ -12,8 +12,7 @@ const RunYearEndClosingSchema = Joi.object({
   date: YmdSchema.optional(),
   memo: Joi.string().allow("", null).max(2000).optional(),
   retained_earnings_account_id: Joi.string().uuid().required(),
-  generate_opening: Joi.boolean().truthy("1").falsy("0").optional(),
+  generate_opening: Joi.boolean().truthy("1").falsy("0").default(true),
 });
 
 module.exports = { ClosingStatusQuerySchema, RunYearEndClosingSchema };
-
