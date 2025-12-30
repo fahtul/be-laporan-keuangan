@@ -55,6 +55,8 @@ class AccountsHandler {
       includeInactive,
     });
 
+    // console.log("items", JSON.stringify(items));
+
     return h.response({ status: "success", data: items });
   }
 

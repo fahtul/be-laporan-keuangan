@@ -104,7 +104,7 @@ class SubledgersService {
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
       .andWhere("jl.account_id", accountId)
-      .andWhereNotNull("jl.bp_id")
+      .whereNotNull("jl.bp_id")
       .groupBy("jl.bp_id")
       .select("jl.bp_id")
       .select(
@@ -443,4 +443,3 @@ class SubledgersService {
 }
 
 module.exports = SubledgersService;
-

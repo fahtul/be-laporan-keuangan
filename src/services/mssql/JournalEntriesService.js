@@ -5,6 +5,20 @@ const InvariantError = require("../../exceptions/InvariantError");
 const IDEM_SCOPE_POST = "journal_entries.post";
 const toCents = (n) => Math.round(Number(n || 0) * 100);
 
+const selectDateOnlyAsText = (qualifiedColumn, alias = "date") => {
+  const client = knex?.client?.config?.client;
+
+  if (client === "pg") {
+    return knex.raw(`${qualifiedColumn}::text as ${alias}`);
+  }
+
+  if (client === "mysql" || client === "mysql2") {
+    return knex.raw(`DATE_FORMAT(${qualifiedColumn}, '%Y-%m-%d') as ${alias}`);
+  }
+
+  return knex.raw(`${qualifiedColumn} as ${alias}`);
+};
+
 class JournalEntriesService {
   // ========== List ==========
   async list({
@@ -55,7 +69,7 @@ class JournalEntriesService {
       .leftJoin(agg, "agg.entry_id", "je.id")
       .select(
         "je.id",
-        "je.date",
+        selectDateOnlyAsText("je.date", "date"),
         "je.memo",
         "je.status",
         "je.posted_at",
@@ -93,7 +107,7 @@ class JournalEntriesService {
       .select(
         "id",
         "organization_id",
-        "date",
+        selectDateOnlyAsText("\"date\"", "date"),
         "memo",
         "status",
         "posted_at",
@@ -622,7 +636,7 @@ class JournalEntriesService {
       .select(
         "je.id",
         "je.organization_id",
-        "je.date",
+        selectDateOnlyAsText("je.date", "date"),
         "je.memo",
         "je.status",
         "je.posted_at",

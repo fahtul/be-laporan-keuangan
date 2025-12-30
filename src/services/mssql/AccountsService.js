@@ -104,7 +104,7 @@ class AccountsService {
         "is_postable"
       )
       .orderBy("code", "asc")
-      .limit(Math.min(Number(limit) || 20, 50));
+      .limit(Math.min(Number(limit) || 20, 1000));
   }
 
   async getById({ organizationId, id }) {
@@ -196,7 +196,8 @@ class AccountsService {
     const type = payload.type;
     const normal_balance = normalBalanceByType(type);
     const cfActivity =
-      payload.cf_activity !== undefined && String(payload.cf_activity).trim() !== ""
+      payload.cf_activity !== undefined &&
+      String(payload.cf_activity).trim() !== ""
         ? String(payload.cf_activity).trim()
         : null;
     const requiresBp =
@@ -306,7 +307,9 @@ class AccountsService {
         : String(payload.cf_activity || "").trim() || null;
 
     const nextRequiresBp =
-      payload.requires_bp === undefined ? !!before.requires_bp : !!payload.requires_bp;
+      payload.requires_bp === undefined
+        ? !!before.requires_bp
+        : !!payload.requires_bp;
 
     const nextSubledger =
       payload.subledger === undefined
@@ -396,14 +399,20 @@ class AccountsService {
       const type = normalizeNullableString(account.type);
       const parent_code = normalizeNullableString(account.parent_code);
 
-      const cashFlowCategory = normalizeNullableString(account.cash_flow_category);
+      const cashFlowCategory = normalizeNullableString(
+        account.cash_flow_category
+      );
       const cf_activity = cashFlowCategory;
 
       const subledgerRaw = normalizeNullableString(account.subledger);
       const subledger = subledgerRaw ? subledgerRaw.toLowerCase() : null;
 
-      const requiresBpFromPayload = normalizeNullableBoolean(account.requires_bp, false);
-      const requires_bp = subledger === "ar" || subledger === "ap" ? true : requiresBpFromPayload;
+      const requiresBpFromPayload = normalizeNullableBoolean(
+        account.requires_bp,
+        false
+      );
+      const requires_bp =
+        subledger === "ar" || subledger === "ap" ? true : requiresBpFromPayload;
 
       const is_postable =
         account.is_postable === undefined ? false : !!account.is_postable;
@@ -422,12 +431,12 @@ class AccountsService {
     });
 
     const codes = normalizedAccounts.map((a) => a.code);
-    const duplicates = codes.filter(
-      (code, idx) => codes.indexOf(code) !== idx
-    );
+    const duplicates = codes.filter((code, idx) => codes.indexOf(code) !== idx);
     if (duplicates.length > 0) {
       throw new InvariantError(
-        `Duplicate account code in payload: ${Array.from(new Set(duplicates)).join(", ")}`
+        `Duplicate account code in payload: ${Array.from(
+          new Set(duplicates)
+        ).join(", ")}`
       );
     }
 
@@ -450,7 +459,9 @@ class AccountsService {
     const visit = (code) => {
       if (visited.has(code)) return;
       if (visiting.has(code)) {
-        throw new InvariantError("Invalid parent_code: cycle detected in payload");
+        throw new InvariantError(
+          "Invalid parent_code: cycle detected in payload"
+        );
       }
 
       visiting.add(code);
@@ -568,7 +579,9 @@ class AccountsService {
         const parentId = acc.parent_code ? codeToId.get(acc.parent_code) : null;
 
         if (!id) {
-          throw new InvariantError(`Account not found after import: ${acc.code}`);
+          throw new InvariantError(
+            `Account not found after import: ${acc.code}`
+          );
         }
 
         if (acc.parent_code && !parentId) {
