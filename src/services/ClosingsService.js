@@ -4,12 +4,28 @@ const knex = require("../database/knex");
 const InvariantError = require("../exceptions/InvariantError");
 const NotFoundError = require("../exceptions/NotFoundError");
 
+const isPostgres = () => knex?.client?.config?.client === "pg";
+
 function round2(n) {
   const x = Number(n || 0);
   return Math.round(x * 100) / 100;
 }
 
 const toCents = (n) => Math.round(Number(n || 0) * 100);
+
+const selectDateOnlyAsText = (qualifiedColumn, alias = "date") => {
+  const client = knex?.client?.config?.client;
+
+  if (client === "pg") {
+    return knex.raw(`to_char(${qualifiedColumn}::date, 'YYYY-MM-DD') as ${alias}`);
+  }
+
+  if (client === "mysql" || client === "mysql2") {
+    return knex.raw(`DATE_FORMAT(${qualifiedColumn}, '%Y-%m-%d') as ${alias}`);
+  }
+
+  return knex.raw(`${qualifiedColumn} as ${alias}`);
+};
 
 function normalBalanceFromAccount(account) {
   const nb = String(account?.normal_balance || "").toLowerCase();
@@ -48,15 +64,202 @@ function assertBalanced(lines) {
 }
 
 class ClosingsService {
+  async _resolveRetainedEarningsAccountForPreview({ organizationId }) {
+    const preferredCode =
+      String(process.env.RETAINED_EARNINGS_ACCOUNT_CODE || "3200").trim() ||
+      "3200";
+
+    const base = knex("accounts as a")
+      .select(
+        "a.id",
+        "a.code",
+        "a.name",
+        "a.type",
+        "a.normal_balance",
+        "a.is_postable"
+      )
+      .where("a.organization_id", organizationId)
+      .whereNull("a.deleted_at")
+      .andWhere("a.type", "equity")
+      .andWhere("a.is_postable", true);
+
+    const byCode = await base
+      .clone()
+      .andWhere("a.code", preferredCode)
+      .first();
+    if (byCode) return { account: byCode, source: "code" };
+
+    const byName = await base
+      .clone()
+      .andWhere((qb) => {
+        qb.whereILike("a.name", "%laba ditahan%")
+          .orWhereILike("a.name", "%retained%earnings%")
+          .orWhereILike("a.name", "%retained earnings%");
+      })
+      .orderBy("a.code", "asc")
+      .first();
+    if (byName) return { account: byName, source: "name" };
+
+    const anyEquity = await base.clone().orderBy("a.code", "asc").first();
+    if (anyEquity) return { account: anyEquity, source: "first_equity" };
+
+    return { account: null, source: "missing", preferred_code: preferredCode };
+  }
+
+  async _buildYearEndClosingPreview({
+    organizationId,
+    year,
+    closingDate,
+    retainedEarningsAccount,
+  }) {
+    const y = String(year || "").trim();
+    const fromDate = `${y}-01-01`;
+    const toDate = String(closingDate || `${y}-12-31`).trim();
+
+    // P&L balances for the year (posted only), excluding any closing entries
+    const q = knex("journal_lines as jl")
+      .join("journal_entries as je", "je.id", "jl.entry_id")
+      .join("accounts as a", "a.id", "jl.account_id")
+      .where("jl.organization_id", organizationId)
+      .whereNull("jl.deleted_at")
+      .andWhere("je.organization_id", organizationId)
+      .whereNull("je.deleted_at")
+      .andWhere("je.status", "posted")
+      .andWhereRaw("COALESCE(je.entry_type, '') <> 'closing'")
+      .andWhere("a.organization_id", organizationId)
+      .whereNull("a.deleted_at")
+      .whereIn("a.type", ["revenue", "expense"])
+      .andWhere("a.is_postable", true)
+      .andWhere((qb) => {
+        if (isPostgres()) {
+          qb.whereRaw("je.date::date >= ?::date AND je.date::date <= ?::date", [
+            fromDate,
+            toDate,
+          ]);
+          return;
+        }
+
+        qb.where("je.date", ">=", fromDate).andWhere("je.date", "<=", toDate);
+      })
+      .groupBy("a.id", "a.code", "a.name", "a.type", "a.normal_balance")
+      .select(
+        "a.id as account_id",
+        "a.code",
+        "a.name",
+        "a.type",
+        "a.normal_balance"
+      )
+      .select(
+        knex.raw("COALESCE(SUM(jl.debit), 0) as sum_debit"),
+        knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
+      )
+      .orderBy("a.code", "asc")
+      .orderBy("a.name", "asc");
+
+    const rows = await q;
+
+    const lines = [];
+    let revenueTotal = 0;
+    let expenseTotal = 0;
+
+    for (const r of rows) {
+      const debit = round2(r.sum_debit);
+      const credit = round2(r.sum_credit);
+
+      const normalPos = normalBalanceFromAccount(r);
+      const signed = round2(signedFromSums({ debit, credit }, normalPos));
+      if (toCents(signed) === 0) continue;
+
+      const type = String(r.type || "").toLowerCase();
+      if (type === "revenue") revenueTotal = round2(revenueTotal + signed);
+      else if (type === "expense")
+        expenseTotal = round2(expenseTotal + signed);
+
+      const closingDelta = round2(-signed);
+
+      // Build a line that negates the account's balance:
+      // - normalPos=debit: delta = debit - credit
+      // - normalPos=credit: delta = credit - debit
+      let lineDebit = 0;
+      let lineCredit = 0;
+
+      if (normalPos === "debit") {
+        lineDebit = closingDelta > 0 ? round2(Math.abs(closingDelta)) : 0;
+        lineCredit = closingDelta < 0 ? round2(Math.abs(closingDelta)) : 0;
+      } else {
+        lineCredit = closingDelta > 0 ? round2(Math.abs(closingDelta)) : 0;
+        lineDebit = closingDelta < 0 ? round2(Math.abs(closingDelta)) : 0;
+      }
+
+      if (toCents(lineDebit) === 0 && toCents(lineCredit) === 0) continue;
+
+      lines.push({
+        account_id: r.account_id,
+        code: String(r.code || "").trim(),
+        name: r.name,
+        debit: lineDebit,
+        credit: lineCredit,
+        memo: `Close ${y} ${String(r.code || "").trim()} ${r.name || ""}`.trim(),
+      });
+    }
+
+    revenueTotal = round2(revenueTotal);
+    expenseTotal = round2(expenseTotal);
+    const netIncome = round2(revenueTotal - expenseTotal);
+
+    if (retainedEarningsAccount && toCents(netIncome) !== 0) {
+      const abs = round2(Math.abs(netIncome));
+      lines.push({
+        account_id: retainedEarningsAccount.id,
+        code: String(retainedEarningsAccount.code || "").trim(),
+        name: retainedEarningsAccount.name,
+        debit: netIncome < 0 ? abs : 0,
+        credit: netIncome > 0 ? abs : 0,
+        memo:
+          netIncome >= 0
+            ? `Retained earnings (profit) ${y} (preview)`
+            : `Retained earnings (loss) ${y} (preview)`,
+      });
+    }
+
+    const totalDebitCents = lines.reduce((sum, l) => sum + toCents(l.debit), 0);
+    const totalCreditCents = lines.reduce(
+      (sum, l) => sum + toCents(l.credit),
+      0
+    );
+
+    const totalDebit = round2(totalDebitCents / 100);
+    const totalCredit = round2(totalCreditCents / 100);
+
+    if (lines.length > 0) assertBalanced(lines);
+
+    return {
+      closing_date: toDate,
+      period: { from_date: fromDate, to_date: toDate },
+      net_income: {
+        amount: round2(Math.abs(netIncome)),
+        side: netIncome >= 0 ? "credit" : "debit",
+      },
+      preview_entry: {
+        entry_type: "closing",
+        date: toDate,
+        memo: "Year-end closing (preview)",
+        lines,
+        totals: { debit: totalDebit, credit: totalCredit },
+      },
+    };
+  }
+
   async getYearEndStatus({ organizationId, year }) {
     if (!organizationId) throw new InvariantError("organizationId is required");
     const y = String(year || "").trim();
     if (!/^\d{4}$/.test(y)) throw new InvariantError("Invalid year");
 
     const nextYear = String(Number(y) + 1);
+    const defaultClosingDate = `${y}-12-31`;
 
     const closing = await knex("journal_entries as je")
-      .select("je.id", "je.date", "je.posted_at")
+      .select("je.id", selectDateOnlyAsText("je.date", "date"), "je.posted_at")
       .where("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.entry_type", "closing")
@@ -71,6 +274,16 @@ class ClosingsService {
       .andWhere("je.opening_key", nextYear)
       .first();
 
+    const retainedResolved =
+      await this._resolveRetainedEarningsAccountForPreview({ organizationId });
+
+    const preview = await this._buildYearEndClosingPreview({
+      organizationId,
+      year: y,
+      closingDate: defaultClosingDate,
+      retainedEarningsAccount: retainedResolved.account,
+    });
+
     return {
       year: y,
       next_year: nextYear,
@@ -79,6 +292,14 @@ class ClosingsService {
       closing_date: closing?.date || null,
       opening_exists: !!opening,
       opening_entry_id: opening?.id || null,
+
+      // Preview fields (Step 13)
+      closing_date_default: defaultClosingDate,
+      period: preview.period,
+      retained_earnings_account: retainedResolved.account,
+      retained_earnings_account_source: retainedResolved.source,
+      net_income: preview.net_income,
+      preview_entry: preview.preview_entry,
     };
   }
 
@@ -165,7 +386,7 @@ class ClosingsService {
         .whereNull("jl.deleted_at")
         .andWhere("a.organization_id", organizationId)
         .whereNull("a.deleted_at")
-        .andWhereIn("a.type", ["revenue", "expense"])
+        .whereIn("a.type", ["revenue", "expense"])
         .andWhere("je.date", ">=", fromDate)
         .andWhere("je.date", "<=", toDate)
         .groupBy("a.id", "a.code", "a.name", "a.type")
@@ -350,7 +571,7 @@ class ClosingsService {
           .whereNull("jl.deleted_at")
           .andWhere("a.organization_id", organizationId)
           .whereNull("a.deleted_at")
-          .andWhereIn("a.type", ["asset", "liability", "equity"])
+          .whereIn("a.type", ["asset", "liability", "equity"])
           .andWhere("a.is_postable", true)
           .andWhere("je.date", "<=", toDate)
           .groupBy("a.id", "a.code", "a.name", "a.type", "a.normal_balance")

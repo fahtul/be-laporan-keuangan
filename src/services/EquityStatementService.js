@@ -58,10 +58,8 @@ class EquityStatementService {
     this._incomeStatement = incomeStatementService;
   }
 
-  async _sumByAccount({ organizationId, accountIds, dateFrom, dateTo }) {
-    if (!accountIds || accountIds.length === 0) return new Map();
-
-    const q = knex("journal_lines as jl")
+  _baseSumQuery({ organizationId, accountIds }) {
+    return knex("journal_lines as jl")
       .join("journal_entries as je", "je.id", "jl.entry_id")
       .where("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
@@ -69,13 +67,47 @@ class EquityStatementService {
       .andWhere("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.status", "posted");
+  }
 
-    if (dateFrom !== null && dateFrom !== undefined)
-      q.andWhere("je.date", ">=", dateFrom);
-    if (dateTo !== null && dateTo !== undefined)
-      q.andWhere("je.date", "<=", dateTo);
+  async _sumOpeningByAccount({ organizationId, accountIds, fromDate }) {
+    if (!accountIds || accountIds.length === 0) return new Map();
 
-    const rows = await q
+    // OPENING = semua sebelum fromDate (by DATE) + entry_type='opening' tepat di fromDate (by DATE)
+    const rows = await this._baseSumQuery({ organizationId, accountIds })
+      .andWhereRaw(
+        `(je.date::date < ?::date OR (je.date::date = ?::date AND je.entry_type = 'opening'))`,
+        [fromDate, fromDate]
+      )
+      .groupBy("jl.account_id")
+      .select("jl.account_id")
+      .select(
+        knex.raw("COALESCE(SUM(jl.debit), 0) as sum_debit"),
+        knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
+      );
+
+    const map = new Map();
+    for (const r of rows) {
+      map.set(r.account_id, {
+        debit: round2(r.sum_debit),
+        credit: round2(r.sum_credit),
+      });
+    }
+    return map;
+  }
+
+  async _sumMutationByAccount({
+    organizationId,
+    accountIds,
+    fromDate,
+    toDate,
+  }) {
+    if (!accountIds || accountIds.length === 0) return new Map();
+
+    // MUTATION = range periode (by DATE) tapi EXCLUDE entry_type='opening'
+    const rows = await this._baseSumQuery({ organizationId, accountIds })
+      .andWhereRaw(`je.date::date >= ?::date`, [fromDate])
+      .andWhereRaw(`je.date::date <= ?::date`, [toDate])
+      .andWhereRaw(`je.entry_type IS DISTINCT FROM 'opening'`)
       .groupBy("jl.account_id")
       .select("jl.account_id")
       .select(
@@ -134,22 +166,18 @@ class EquityStatementService {
     const accounts = await accountsQ;
     const equityIds = accounts.map((a) => a.id);
 
-    // 2) Opening sums (< from_date) and mutation sums (between inclusive)
-    const mutationMap = await this._sumByAccount({
+    // 2) Opening & Mutation (FIXED)
+    const openingMap = await this._sumOpeningByAccount({
       organizationId,
       accountIds: equityIds,
-      dateFrom: fromDate,
-      dateTo: toDate,
+      fromDate,
     });
 
-    const openingAsOf = String(fromDate).trim();
-    const openingTo = addDaysYmd(openingAsOf, -1);
-    if (!openingTo) throw new InvariantError("Invalid from_date");
-    const openingBefore = await this._sumByAccount({
+    const mutationMap = await this._sumMutationByAccount({
       organizationId,
       accountIds: equityIds,
-      dateFrom: null,
-      dateTo: openingTo,
+      fromDate,
+      toDate,
     });
 
     // 3) Profit for period
@@ -173,7 +201,6 @@ class EquityStatementService {
       if (String(profitMode || "net").toLowerCase() === "after_tax") {
         profitSigned = round2(Number(summary.net_profit_after_tax || 0));
       } else {
-        // "net" mode: prefer net_profit if ever added, else fallback to after_tax.
         profitSigned = round2(
           Number(summary.net_profit ?? summary.net_profit_after_tax ?? 0)
         );
@@ -215,13 +242,12 @@ class EquityStatementService {
     };
 
     for (const a of accounts) {
+      const nb = String(a.normal_balance || "").toLowerCase();
       const normalPos =
-        String(a.normal_balance || "").toLowerCase() === "debit" ||
-        String(a.normal_balance || "").toLowerCase() === "credit"
-          ? String(a.normal_balance).toLowerCase()
-          : normalBalanceFromType(a.type);
+        nb === "debit" || nb === "credit" ? nb : normalBalanceFromType(a.type);
 
-      const openingDC = openingBefore.get(a.id) || { debit: 0, credit: 0 };
+      // OPENING
+      const openingDC = openingMap.get(a.id) || { debit: 0, credit: 0 };
       const openingSigned = signedFromDebitCredit(openingDC, normalPos);
       openingTotalSigned = round2(openingTotalSigned + openingSigned);
 
@@ -238,6 +264,7 @@ class EquityStatementService {
         });
       }
 
+      // MUTATION (period change, EXCLUDES opening entry_type)
       const mutationDC = mutationMap.get(a.id) || { debit: 0, credit: 0 };
       const mutationSigned = signedFromDebitCredit(mutationDC, normalPos);
 
@@ -255,6 +282,7 @@ class EquityStatementService {
         });
       }
 
+      // CLOSING (opening + mutation)
       const closingSigned = round2(openingSigned + mutationSigned);
       closingTotalSigned = round2(closingTotalSigned + closingSigned);
 
@@ -281,6 +309,13 @@ class EquityStatementService {
       if (!includeZero && items.length === 0) return;
 
       const total = toAmountSide(cat.totalSigned, "credit");
+      // sort items biar rapih
+      items.sort((a, b) =>
+        String(a.code || "").localeCompare(String(b.code || ""), "en", {
+          numeric: true,
+        })
+      );
+
       movementCategories.push({
         key: cat.key,
         label: cat.label,
@@ -361,18 +396,3 @@ class EquityStatementService {
 }
 
 module.exports = EquityStatementService;
-
-function addDaysYmd(ymd, deltaDays) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "").trim());
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]) - 1;
-  const d = Number(m[3]);
-  const dt = new Date(Date.UTC(y, mo, d));
-  if (Number.isNaN(dt.getTime())) return null;
-  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
-  const yyyy = dt.getUTCFullYear();
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}

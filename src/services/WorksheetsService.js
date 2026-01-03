@@ -6,6 +6,34 @@ function round2(n) {
   return Math.round(x * 100) / 100;
 }
 
+function oppositePos(pos) {
+  return pos === "debit" ? "credit" : "debit";
+}
+
+function posFromSigned(signed, normalPos) {
+  return signed >= 0 ? normalPos : oppositePos(normalPos);
+}
+
+function normalBalanceFromAccount(account) {
+  const nb = String(account?.normal_balance || "").toLowerCase();
+  if (nb === "debit" || nb === "credit") return nb;
+
+  const type = String(account?.type || "").toLowerCase();
+  return type === "asset" || type === "expense" ? "debit" : "credit";
+}
+
+function signedFromSums({ debit, credit }, normalPos) {
+  const d = Number(debit || 0);
+  const c = Number(credit || 0);
+  return normalPos === "debit" ? d - c : c - d;
+}
+
+function netFromSigned(signed, normalPos) {
+  const pos = posFromSigned(signed, normalPos);
+  const abs = round2(Math.abs(signed));
+  return { debit: pos === "debit" ? abs : 0, credit: pos === "credit" ? abs : 0 };
+}
+
 function addDaysYmd(ymd, deltaDays) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "").trim());
   if (!m) return null;
@@ -146,10 +174,14 @@ class WorksheetsService {
     for (const a of accounts) {
       const opening = openingMap.get(a.id) || { debit: 0, credit: 0 };
       const mutation = mutationMap.get(a.id) || { debit: 0, credit: 0 };
-      const closing = {
-        debit: round2(opening.debit + mutation.debit),
-        credit: round2(opening.credit + mutation.credit),
-      };
+
+      // Closing must be NET balance (saldo bersih) shown on one side only.
+      // Opening/mutation remain gross sums, but closing uses signed logic based on normal balance.
+      const normalPos = normalBalanceFromAccount(a);
+      const openingSigned = round2(signedFromSums(opening, normalPos));
+      const mutationSigned = round2(signedFromSums(mutation, normalPos));
+      const closingSigned = round2(openingSigned + mutationSigned);
+      const closing = netFromSigned(closingSigned, normalPos);
 
       const pnlAcc = isPnlAccount(a, useCodeRule);
       const bsAcc = isBalanceSheetAccount(a);

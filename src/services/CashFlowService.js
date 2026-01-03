@@ -30,13 +30,12 @@ function addDaysYmd(ymd, deltaDays) {
 }
 
 function normalizeActivity(cfActivity, code) {
-  const cfa = String(cfActivity || "")
-    .trim()
-    .toLowerCase();
+  const cfa = String(cfActivity || "").trim().toLowerCase();
   if (cfa === "operating" || cfa === "investing" || cfa === "financing")
     return cfa;
 
   const c = String(code || "").trim();
+  // fallback minimal (boleh kamu perluas)
   if (c.startsWith("4") || c.startsWith("5")) return "operating";
   return "operating";
 }
@@ -48,6 +47,7 @@ class CashFlowService {
     cashPrefix = "11",
   }) {
     if (cashAccountIds && cashAccountIds.length > 0) {
+      // explicit list: jangan paksa is_postable (biar user bisa override)
       return knex("accounts")
         .select("id", "code", "name")
         .where("organization_id", organizationId)
@@ -59,10 +59,12 @@ class CashFlowService {
     const prefix = String(cashPrefix || "11").trim() || "11";
     const prefixLike = `${prefix}%`;
 
+    // IMPORTANT: hanya akun postable supaya header (mis 1100) tidak ikut
     return knex("accounts")
       .select("id", "code", "name")
       .where("organization_id", organizationId)
       .whereNull("deleted_at")
+      .andWhere("is_postable", true)
       .andWhere((qb) => {
         qb.where("cf_activity", "cash").orWhere((q2) => {
           q2.whereNull("cf_activity").andWhere((q3) => {
@@ -86,7 +88,8 @@ class CashFlowService {
       .andWhere("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.status", "posted")
-      .andWhere("je.date", "<=", asOf)
+      // DATE-ONLY compare (Postgres)
+      .andWhereRaw("je.date::date <= ?::date", [String(asOf).trim()])
       .first(
         knex.raw("COALESCE(SUM(jl.debit), 0) as sum_debit"),
         knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
@@ -95,6 +98,41 @@ class CashFlowService {
     const debit = Number(row?.sum_debit || 0);
     const credit = Number(row?.sum_credit || 0);
     // cash normal balance = debit
+    return round2(debit - credit);
+  }
+
+  // BEGINNING cash = saldo sebelum fromDate + opening entry tepat di fromDate
+  // (opening entry tidak boleh masuk mutasi cashflow)
+  async _cashBeginningSigned({ organizationId, cashAccountIds, fromDate }) {
+    if (!cashAccountIds || cashAccountIds.length === 0) return 0;
+
+    const fd = String(fromDate).trim();
+
+    const row = await knex("journal_lines as jl")
+      .join("journal_entries as je", "je.id", "jl.entry_id")
+      .where("jl.organization_id", organizationId)
+      .whereNull("jl.deleted_at")
+      .whereIn("jl.account_id", cashAccountIds)
+      .andWhere("je.organization_id", organizationId)
+      .whereNull("je.deleted_at")
+      .andWhere("je.status", "posted")
+      .andWhere((qb) => {
+        // strictly before fromDate
+        qb.whereRaw("je.date::date < ?::date", [fd]).orWhere((q2) => {
+          // include opening exactly on fromDate
+          q2.where("je.entry_type", "opening").andWhereRaw(
+            "je.date::date = ?::date",
+            [fd]
+          );
+        });
+      })
+      .first(
+        knex.raw("COALESCE(SUM(jl.debit), 0) as sum_debit"),
+        knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
+      );
+
+    const debit = Number(row?.sum_debit || 0);
+    const credit = Number(row?.sum_credit || 0);
     return round2(debit - credit);
   }
 
@@ -114,8 +152,11 @@ class CashFlowService {
       throw new InvariantError("from_date must be <= to_date");
     }
 
-    const openingAsOf = addDaysYmd(fromDate, -1);
-    const endingAsOf = String(toDate).trim();
+    const fd = String(fromDate).trim();
+    const td = String(toDate).trim();
+
+    const openingAsOf = addDaysYmd(fd, -1);
+    const endingAsOf = td;
     if (!openingAsOf) throw new InvariantError("Invalid from_date");
 
     const cashAccounts = await this._resolveCashAccounts({
@@ -126,11 +167,13 @@ class CashFlowService {
     const cashIds = cashAccounts.map((a) => a.id);
     const cashIdSet = new Set(cashIds);
 
-    const beginCash = await this._cashBalanceSignedAsOf({
+    // FIX: beginning includes opening entry on fromDate
+    const beginCash = await this._cashBeginningSigned({
       organizationId,
       cashAccountIds: cashIds,
-      asOf: openingAsOf,
+      fromDate: fd,
     });
+
     const endCashActual = await this._cashBalanceSignedAsOf({
       organizationId,
       cashAccountIds: cashIds,
@@ -143,8 +186,8 @@ class CashFlowService {
       const difference = round2(endCashActual - endCashCalc);
       return {
         period: {
-          from_date: String(fromDate).trim(),
-          to_date: String(toDate).trim(),
+          from_date: fd,
+          to_date: td,
           opening_as_of: openingAsOf,
           ending_as_of: endingAsOf,
         },
@@ -176,7 +219,8 @@ class CashFlowService {
       };
     }
 
-    // Load all posted journal lines within period for entries that have at least one cash line.
+    // Load posted journal lines within period for entries that have at least one cash line.
+    // IMPORTANT: exclude entry_type opening/closing from cashflow movements.
     const lines = await knex("journal_lines as jl")
       .join("journal_entries as je", "je.id", "jl.entry_id")
       .join("accounts as a", "a.id", "jl.account_id")
@@ -185,8 +229,16 @@ class CashFlowService {
       .andWhere("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.status", "posted")
-      .andWhere("je.date", ">=", fromDate)
-      .andWhere("je.date", "<=", toDate)
+      // DATE-ONLY range
+      .andWhereRaw("je.date::date >= ?::date", [fd])
+      .andWhereRaw("je.date::date <= ?::date", [td])
+      // keep null entry_type, but exclude opening/closing
+      .andWhere((qb) => {
+        qb.whereNull("je.entry_type").orWhereNotIn("je.entry_type", [
+          "opening",
+          "closing",
+        ]);
+      })
       .whereExists(function cashExists() {
         this.select(1)
           .from("journal_lines as jl2")
@@ -197,8 +249,9 @@ class CashFlowService {
       })
       .select(
         "je.id as entry_id",
-        "je.date as entry_date",
+        knex.raw("je.date::date as entry_date"),
         "je.created_at as entry_created_at",
+        "je.entry_type",
         "jl.id as line_id",
         "jl.account_id",
         "jl.debit",
@@ -207,7 +260,7 @@ class CashFlowService {
         "a.name as account_name",
         "a.cf_activity as account_cf_activity"
       )
-      .orderBy("je.date", "asc")
+      .orderByRaw("je.date::date asc")
       .orderBy("je.created_at", "asc")
       .orderBy("jl.created_at", "asc")
       .orderBy("jl.id", "asc");
@@ -220,6 +273,7 @@ class CashFlowService {
           entry_id: id,
           date: r.entry_date,
           created_at: r.entry_created_at,
+          entry_type: r.entry_type,
           lines: [],
         });
       }
@@ -259,6 +313,8 @@ class CashFlowService {
       );
 
       const isCashOnly = cashLines.length > 0 && nonCashLines.length === 0;
+
+      // cash-to-cash transfer (cashEffect 0)
       if (cashEffect === 0) {
         if (isCashOnly) {
           const moved = round2(
@@ -274,16 +330,13 @@ class CashFlowService {
       }
 
       if (nonCashLines.length === 0) {
-        // Fallback: if we cannot find counterpart lines, treat as operating.
+        // Fallback: no counterpart lines -> operating
         activityTotalsCents.operating += toCents(cashEffect);
         continue;
       }
 
       const weighted = nonCashLines.map((l) => {
-        const activity = normalizeActivity(
-          l.account_cf_activity,
-          l.account_code
-        );
+        const activity = normalizeActivity(l.account_cf_activity, l.account_code);
         const weight = Number(l.debit || 0) + Number(l.credit || 0);
         return { ...l, activity, weight };
       });
@@ -346,13 +399,9 @@ class CashFlowService {
         if (!includeZero) items = items.filter((it) => it.amount !== 0);
 
         items.sort((a, b) => {
-          const c = String(a.code || "").localeCompare(
-            String(b.code || ""),
-            "en",
-            {
-              numeric: true,
-            }
-          );
+          const c = String(a.code || "").localeCompare(String(b.code || ""), "en", {
+            numeric: true,
+          });
           if (c !== 0) return c;
           return String(a.name || "").localeCompare(String(b.name || ""), "en");
         });
@@ -373,8 +422,8 @@ class CashFlowService {
 
     return {
       period: {
-        from_date: String(fromDate).trim(),
-        to_date: String(toDate).trim(),
+        from_date: fd,
+        to_date: td,
         opening_as_of: openingAsOf,
         ending_as_of: endingAsOf,
       },

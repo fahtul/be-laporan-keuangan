@@ -37,32 +37,76 @@ class TrialBalanceService {
     includeHeader = false,
   }) {
     if (!organizationId) throw new InvariantError("organizationId is required");
-    if (!fromDate || !toDate)
+    if (!fromDate || !toDate) {
       throw new InvariantError("from_date and to_date are required");
-    if (new Date(fromDate) > new Date(toDate)) {
+    }
+
+    // string compare aman untuk YYYY-MM-DD
+    if (String(fromDate) > String(toDate)) {
       throw new InvariantError("from_date must be <= to_date");
     }
 
-    // A) accounts
+    // Postgres date-only compare
+    const DATE_ONLY = "je.date::date";
+
+    const fromYmd = String(fromDate).trim();
+    const toYmd = String(toDate).trim();
+
+    // kita support special policy hanya kalau range 1 tahun (umumnya UI kamu "Tahun")
+    const sameYear = fromYmd.slice(0, 4) === toYmd.slice(0, 4);
+    const year = fromYmd.slice(0, 4);
+    const yearStart = `${year}-01-01`;
+
+    // A) Accounts
     const accountsQ = knex("accounts as a")
-      .select("a.id", "a.code", "a.name", "a.type", "a.normal_balance")
+      .select(
+        "a.id",
+        "a.code",
+        "a.name",
+        "a.type",
+        "a.normal_balance",
+        "a.is_postable"
+      )
       .where("a.organization_id", organizationId)
       .whereNull("a.deleted_at");
 
     if (!includeHeader) accountsQ.andWhere("a.is_postable", true);
 
-    const accounts = await accountsQ.orderBy("a.code", "asc").orderBy("a.name");
-    const accountById = new Map(accounts.map((a) => [a.id, a]));
+    const accounts = await accountsQ
+      .orderBy("a.code", "asc")
+      .orderBy("a.name", "asc");
 
-    // B) opening sums (< fromDate)
-    const openingRows = await knex("journal_entries as je")
+    // B) Detect opening entry for this year (posted, not deleted) on yearStart
+    let hasYearOpening = false;
+
+    if (sameYear) {
+      const openingRow = await knex("journal_entries as je")
+        .where("je.organization_id", organizationId)
+        .whereNull("je.deleted_at")
+        .andWhere("je.status", "posted")
+        .andWhere("je.entry_type", "opening")
+        .andWhereRaw(`${DATE_ONLY} = ?::date`, [yearStart])
+        .first("je.id");
+
+      hasYearOpening = !!openingRow;
+    }
+
+    // Policy:
+    // - kalau opening entry tahun itu ada, jadikan itu baseline (jangan ikut akumulasi transaksi sebelum yearStart)
+    const useOpeningBaseline = sameYear && hasYearOpening;
+
+    // C) Opening sums
+    // - default: all posted < fromDate
+    // - baseline mode:
+    //   - kalau fromDate == yearStart: opening = opening entries on yearStart
+    //   - kalau fromDate > yearStart: opening = all posted from yearStart .. < fromDate (termasuk opening entry)
+    const openingRowsQ = knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.status", "posted")
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
-      .andWhere("je.date", "<", fromDate)
       .groupBy("jl.account_id")
       .select("jl.account_id")
       .select(
@@ -70,16 +114,36 @@ class TrialBalanceService {
         knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
       );
 
-    // C) mutation sums (between)
-    const mutationRows = await knex("journal_entries as je")
+    if (useOpeningBaseline) {
+      if (fromYmd === yearStart) {
+        // opening = opening entry di yearStart saja
+        openingRowsQ
+          .andWhere("je.entry_type", "opening")
+          .andWhereRaw(`${DATE_ONLY} = ?::date`, [yearStart]);
+      } else {
+        // opening = semua transaksi dari awal tahun sampai sebelum fromDate
+        openingRowsQ
+          .andWhereRaw(`${DATE_ONLY} >= ?::date`, [yearStart])
+          .andWhereRaw(`${DATE_ONLY} < ?::date`, [fromYmd]);
+      }
+    } else {
+      openingRowsQ.andWhereRaw(`${DATE_ONLY} < ?::date`, [fromYmd]);
+    }
+
+    const openingRows = await openingRowsQ;
+
+    // D) Mutation sums
+    // - always: fromDate..toDate
+    // - baseline mode: (kalau fromDate == yearStart) exclude opening entry di yearStart biar gak dobel
+    const mutationRowsQ = knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
       .whereNull("je.deleted_at")
       .andWhere("je.status", "posted")
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
-      .andWhere("je.date", ">=", fromDate)
-      .andWhere("je.date", "<=", toDate)
+      .andWhereRaw(`${DATE_ONLY} >= ?::date`, [fromYmd])
+      .andWhereRaw(`${DATE_ONLY} <= ?::date`, [toYmd])
       .groupBy("jl.account_id")
       .select("jl.account_id")
       .select(
@@ -87,6 +151,16 @@ class TrialBalanceService {
         knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
       );
 
+    if (useOpeningBaseline && fromYmd === yearStart) {
+      mutationRowsQ.andWhereRaw(
+        `NOT (je.entry_type = 'opening' AND ${DATE_ONLY} = ?::date)`,
+        [yearStart]
+      );
+    }
+
+    const mutationRows = await mutationRowsQ;
+
+    // E) Map sums
     const openingByAccountId = new Map(
       openingRows.map((r) => [
         r.account_id,
@@ -101,13 +175,16 @@ class TrialBalanceService {
       ])
     );
 
-    // D) merge + compute closing
+    // F) Merge + compute closing
     const items = [];
 
     for (const a of accounts) {
       const normalPos = normalBalanceFromAccount(a);
 
-      const openingSum = openingByAccountId.get(a.id) || { debit: 0, credit: 0 };
+      const openingSum = openingByAccountId.get(a.id) || {
+        debit: 0,
+        credit: 0,
+      };
       const mutation = mutationByAccountId.get(a.id) || { debit: 0, credit: 0 };
 
       const openingSigned = round2(signedFromSums(openingSum, normalPos));
@@ -121,13 +198,15 @@ class TrialBalanceService {
       const mutationDebit = round2(mutation.debit);
       const mutationCredit = round2(mutation.credit);
       const mutationSigned = round2(
-        signedFromSums({ debit: mutationDebit, credit: mutationCredit }, normalPos)
+        signedFromSums(
+          { debit: mutationDebit, credit: mutationCredit },
+          normalPos
+        )
       );
 
       const closingSigned = round2(openingSigned + mutationSigned);
       const closingPos = posFromSigned(closingSigned, normalPos);
       const closingAbs = round2(Math.abs(closingSigned));
-
       const closing = {
         debit: closingPos === "debit" ? closingAbs : 0,
         credit: closingPos === "credit" ? closingAbs : 0,
@@ -157,7 +236,7 @@ class TrialBalanceService {
       });
     }
 
-    // E) totals (from items, not raw aggs)
+    // G) totals
     const totals = {
       opening_debit: 0,
       opening_credit: 0,
@@ -180,7 +259,7 @@ class TrialBalanceService {
       totals[k] = round2(totals[k]);
     });
 
-    // F) stable sort (service-level, in case DB collation differs)
+    // H) sort
     items.sort((a, b) => {
       const c = String(a.code || "").localeCompare(String(b.code || ""), "en", {
         numeric: true,
@@ -190,7 +269,12 @@ class TrialBalanceService {
     });
 
     return {
-      period: { from_date: fromDate, to_date: toDate },
+      period: { from_date: fromYmd, to_date: toYmd },
+      opening_policy: useOpeningBaseline
+        ? fromYmd === yearStart
+          ? "opening = entry_type=opening on year_start (baseline year)"
+          : "opening = sum from year_start .. < from_date (baseline year)"
+        : "opening = (< from_date)",
       items,
       totals,
     };
@@ -198,4 +282,3 @@ class TrialBalanceService {
 }
 
 module.exports = TrialBalanceService;
-

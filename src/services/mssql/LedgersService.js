@@ -33,7 +33,9 @@ class LedgersService {
     if (!fromDate || !toDate)
       throw new InvariantError("fromDate and toDate are required");
 
-    if (new Date(fromDate) > new Date(toDate)) {
+    // fromDate/toDate expected "YYYY-MM-DD"
+    // Lebih aman bandingkan string ISO date-only (lexicographically OK)
+    if (String(fromDate) > String(toDate)) {
       throw new InvariantError("from_date must be <= to_date");
     }
 
@@ -51,8 +53,15 @@ class LedgersService {
 
     const normalPos = normalBalanceFromType(account.type);
 
-    // 2) OPENING SUM (Opsi B):
-    // saldo sebelum periode = semua transaksi POSTED sebelum fromDate
+    // NOTE:
+    // Fix bug tanggal "mundur 1 hari" dengan cara:
+    // - Semua filter periode pakai je.date::date
+    // - Semua output rows[].date dipaksa jadi string "YYYY-MM-DD" via to_char()
+    const DATE_ONLY_EXPR = "je.date::date";
+    const DATE_STR_EXPR = "to_char(je.date::date, 'YYYY-MM-DD')";
+
+    // 2) OPENING SUM:
+    // saldo sebelum periode = semua transaksi POSTED sebelum fromDate (date-only)
     const openingSum = await knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
@@ -61,7 +70,7 @@ class LedgersService {
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
       .andWhere("jl.account_id", accountId)
-      .andWhere("je.date", "<", fromDate)
+      .andWhereRaw(`${DATE_ONLY_EXPR} < ?::date`, [fromDate])
       .select(
         knex.raw("COALESCE(SUM(jl.debit), 0) as sum_debit"),
         knex.raw("COALESCE(SUM(jl.credit), 0) as sum_credit")
@@ -78,8 +87,8 @@ class LedgersService {
     const openingPos = posFromSigned(openingSigned, normalPos);
     const openingAbs = round2(Math.abs(openingSigned));
 
-    // 3) TRANSAKSI PERIODE (Opsi B):
-    // include semua transaksi posted di range, termasuk entry_type='opening' pada fromDate
+    // 3) TRANSAKSI PERIODE:
+    // include semua transaksi posted di range (date-only), termasuk entry_type='opening' pada fromDate
     const txRows = await knex("journal_entries as je")
       .join("journal_lines as jl", "jl.entry_id", "je.id")
       .where("je.organization_id", organizationId)
@@ -88,12 +97,11 @@ class LedgersService {
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
       .andWhere("jl.account_id", accountId)
-      .andWhere("je.date", ">=", fromDate)
-      .andWhere("je.date", "<=", toDate)
+      .andWhereRaw(`${DATE_ONLY_EXPR} >= ?::date`, [fromDate])
+      .andWhereRaw(`${DATE_ONLY_EXPR} <= ?::date`, [toDate])
       .select(
         "je.id as entry_id",
-        // normalize date to YYYY-MM-DD (Postgres). Jika kolom je.date sudah DATE, ini aman.
-        knex.raw("je.date::date as date"),
+        knex.raw(`${DATE_STR_EXPR} as date`), // <-- selalu "YYYY-MM-DD" (string)
         "je.memo as entry_memo",
         "je.entry_type",
         "je.created_at as entry_created_at",
@@ -104,7 +112,7 @@ class LedgersService {
         "jl.created_at as line_created_at"
       )
       // urutan deterministik + opening duluan pada tanggal yang sama
-      .orderBy("date", "asc")
+      .orderByRaw(`${DATE_ONLY_EXPR} asc`)
       .orderByRaw(`CASE WHEN je.entry_type = 'opening' THEN 0 ELSE 1 END`)
       .orderBy("je.created_at", "asc")
       .orderBy("je.id", "asc")
@@ -118,7 +126,7 @@ class LedgersService {
     const rows = [
       {
         kind: "opening",
-        date: fromDate, // tampil di awal tabel, tapi maknanya "saldo sebelum periode"
+        date: fromDate, // date-only, maknanya "saldo sebelum periode"
         ref: null,
         description: "Saldo sebelum periode",
         debit: 0,
@@ -151,7 +159,7 @@ class LedgersService {
 
       rows.push({
         kind: "tx",
-        date: r.date, // sudah dinormalisasi (YYYY-MM-DD)
+        date: r.date, // <-- sudah "YYYY-MM-DD" (string)
         ref: r.entry_id,
         entry_id: r.entry_id,
         entry_type: r.entry_type,
