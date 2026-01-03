@@ -149,6 +149,13 @@ const init = async () => {
 
   server.route({
     method: "GET",
+    path: "/env-check",
+    options: { auth: false },
+    handler: () => ({ hasBffKey: !!process.env.BFF_JWT_KEY }),
+  });
+
+  server.route({
+    method: "GET",
     path: "/v1/auth-check",
     handler: () => ({ status: "success" }),
   });
