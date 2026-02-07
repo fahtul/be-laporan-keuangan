@@ -10,6 +10,9 @@ const JournalLineSchema = Joi.object({
   const debit = Number(value.debit || 0);
   const credit = Number(value.credit || 0);
 
+  // allow placeholder rows in UI (will be ignored by service)
+  if (debit === 0 && credit === 0) return value;
+
   if (debit > 0 && credit === 0) return value;
   if (credit > 0 && debit === 0) return value;
 
@@ -25,4 +28,18 @@ const CreateOpeningBalanceSchema = Joi.object({
   lines: Joi.array().items(JournalLineSchema).min(2).required(),
 });
 
-module.exports = { CreateOpeningBalanceSchema };
+const UpdateOpeningBalanceSchema = Joi.object({
+  date: Joi.date().optional(),
+  memo: Joi.string().allow("", null).max(2000).optional(),
+  lines: Joi.array().items(JournalLineSchema).min(2).required(),
+}).min(1);
+
+const OpeningBalanceIdParamsSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+});
+
+module.exports = {
+  CreateOpeningBalanceSchema,
+  UpdateOpeningBalanceSchema,
+  OpeningBalanceIdParamsSchema,
+};

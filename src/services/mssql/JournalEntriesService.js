@@ -631,6 +631,18 @@ class JournalEntriesService {
     return true;
   }
 
+  _filterNonZeroLines(rawLines) {
+    const arr = Array.isArray(rawLines) ? rawLines : [];
+
+    return arr
+      .map((l) => ({
+        ...l,
+        debit: Number(l?.debit || 0),
+        credit: Number(l?.credit || 0),
+      }))
+      .filter((l) => !(l.debit === 0 && l.credit === 0));
+  }
+
   async getOpeningByKey({ organizationId, openingKey }) {
     const entry = await knex("journal_entries as je")
       .select(
@@ -677,7 +689,8 @@ class JournalEntriesService {
     const date = payload.date;
     const memo = payload.memo ?? null;
     const openingKey = String(payload.opening_key || "").trim();
-    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
+    const lines = this._filterNonZeroLines(rawLines);
 
     if (!openingKey) throw new InvariantError("opening_key is required");
     if (lines.length < 2)
@@ -739,7 +752,7 @@ class JournalEntriesService {
         bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
         debit: Number(l.debit || 0),
         credit: Number(l.credit || 0),
-        memo: l.memo ?? null,
+        memo: l.memo === "" || l.memo === undefined ? null : l.memo ?? null,
         created_at: trx.fn.now(),
         updated_at: trx.fn.now(),
       }));
@@ -748,6 +761,86 @@ class JournalEntriesService {
     });
 
     return this.getById({ organizationId, id: entryId });
+  }
+
+  async updateOpeningBalance({ organizationId, actorId, id, payload }) {
+    const before = await this.getById({ organizationId, id });
+    void actorId; // reserved for audit log layer
+
+    if (before.entry_type !== "opening") {
+      throw new InvariantError("Only opening balance entries can be updated");
+    }
+    if (before.status !== "posted") {
+      throw new InvariantError("Only posted opening balances can be updated");
+    }
+
+    const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
+    const lines = this._filterNonZeroLines(rawLines);
+
+    if (lines.length < 2) {
+      throw new InvariantError("Opening balance must have at least 2 lines");
+    }
+
+    await knex.transaction(async (trx) => {
+      // lock entry row (avoid concurrent update)
+      const entry = await trx("journal_entries")
+        .where({ organization_id: organizationId, id })
+        .whereNull("deleted_at")
+        .forUpdate()
+        .first();
+
+      if (!entry) throw new NotFoundError("Journal entry not found");
+      if (entry.entry_type !== "opening") {
+        throw new InvariantError("Only opening balance entries can be updated");
+      }
+      if (entry.status !== "posted") {
+        throw new InvariantError("Only posted opening balances can be updated");
+      }
+
+      const nextDate = payload.date ?? entry.date;
+      const nextMemo = payload.memo ?? entry.memo;
+
+      await this._assertPeriodOpen({ organizationId, date: nextDate }, trx);
+      await this._assertAccountsValid({ organizationId, lines }, trx);
+      await this._assertBusinessPartnersValid({ organizationId, lines }, trx);
+      await this._assertBpRequiredByAccounts({ organizationId, lines }, trx);
+      this._assertBalanced(lines);
+
+      await trx("journal_entries")
+        .where({ organization_id: organizationId, id })
+        .whereNull("deleted_at")
+        .update({
+          date: nextDate,
+          memo: nextMemo,
+          updated_at: trx.fn.now(),
+        });
+
+      // soft-delete existing lines for traceability
+      await trx("journal_lines")
+        .where({ organization_id: organizationId, entry_id: id })
+        .whereNull("deleted_at")
+        .update({
+          deleted_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        });
+
+      const rows = lines.map((l) => ({
+        organization_id: organizationId,
+        entry_id: id,
+        account_id: l.account_id,
+        bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
+        debit: Number(l.debit || 0),
+        credit: Number(l.credit || 0),
+        memo: l.memo === "" || l.memo === undefined ? null : l.memo ?? null,
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      }));
+
+      await trx("journal_lines").insert(rows);
+    });
+
+    const after = await this.getById({ organizationId, id });
+    return { before, after };
   }
 }
 

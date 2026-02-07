@@ -26,7 +26,7 @@ class OpeningBalancesHandler {
   }
 
   async create(request, h) {
-    this._validator.validateCreate(request.payload || {});
+    const payload = this._validator.validateCreate(request.payload || {});
 
     const organizationId = request.auth.credentials.organizationId;
     const actorId = request.auth.credentials.id;
@@ -34,7 +34,7 @@ class OpeningBalancesHandler {
     const created = await this._service.createOpeningBalance({
       organizationId,
       actorId,
-      payload: request.payload,
+      payload,
     });
 
     // audit optional
@@ -53,6 +53,37 @@ class OpeningBalancesHandler {
     }
 
     return h.response({ status: "success", data: created }).code(201);
+  }
+
+  async update(request, h) {
+    const { id } = this._validator.validateIdParams(request.params || {});
+    const payload = this._validator.validateUpdate(request.payload || {});
+
+    const organizationId = request.auth.credentials.organizationId;
+    const actorId = request.auth.credentials.id;
+
+    const { before, after } = await this._service.updateOpeningBalance({
+      organizationId,
+      actorId,
+      id,
+      payload,
+    });
+
+    if (this._audit?.log) {
+      await this._audit.log({
+        organizationId,
+        actorId,
+        action: "opening_balance.update",
+        entity: "journal_entry",
+        entityId: after.id,
+        before,
+        after,
+        ip: request.info.remoteAddress,
+        userAgent: request.headers["user-agent"],
+      });
+    }
+
+    return h.response({ status: "success", data: after }).code(200);
   }
 }
 

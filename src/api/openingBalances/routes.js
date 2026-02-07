@@ -13,4 +13,10 @@ module.exports = (handler) => [
     handler: handler.create,
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
+  {
+    method: "PUT",
+    path: "/v1/opening-balances/{id}",
+    handler: handler.update,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
 ];
