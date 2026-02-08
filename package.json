@@ -17,7 +17,6 @@
     "eslint": "^8.57.0",
     "eslint-config-airbnb-base": "^15.0.0",
     "eslint-plugin-import": "^2.29.1",
-    "knex-cli": "^1.0.1",
     "nodemon": "^3.1.4"
   },
   "dependencies": {
@@ -25,7 +24,7 @@
     "@hapi/inert": "^7.1.0",
     "@hapi/jwt": "^3.2.0",
     "auto-bind": "^4.0.0",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "canvas": "^3.1.0",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
