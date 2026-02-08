@@ -69,7 +69,7 @@ class AccountsHandler {
   }
 
   async create(request, h) {
-    this._validator.validateCreate(request.payload);
+    const payload = this._validator.validateCreate(request.payload || {});
 
     const organizationId = request.auth.credentials.organizationId;
     const actorId = request.auth.credentials.id;
@@ -77,7 +77,7 @@ class AccountsHandler {
     try {
       const created = await this._service.create({
         organizationId,
-        payload: request.payload,
+        payload,
       });
 
       await this._audit.log({
@@ -103,7 +103,7 @@ class AccountsHandler {
         msg.toLowerCase().includes("code already exists");
 
       if (isDuplicateCode) {
-        const code = request.payload?.code;
+        const code = payload?.code;
 
         // cari termasuk soft deleted (tanpa whereNull deleted_at)
         const existing = await this._service.findByCodeAny({
@@ -178,7 +178,7 @@ class AccountsHandler {
   }
 
   async update(request, h) {
-    this._validator.validateUpdate(request.payload);
+    const payload = this._validator.validateUpdate(request.payload || {});
 
     const orgId = request.auth.credentials.organizationId;
     const actorId = request.auth.credentials.id;
@@ -187,7 +187,7 @@ class AccountsHandler {
     const { before, after } = await this._service.update({
       organizationId: orgId,
       id,
-      payload: request.payload,
+      payload,
     });
 
     await this._audit.log({

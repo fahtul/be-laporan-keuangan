@@ -2,6 +2,10 @@ const knex = require("../database/knex");
 const InvariantError = require("../exceptions/InvariantError");
 const IncomeStatementService = require("./IncomeStatementService");
 
+const DB_CLIENT = knex?.client?.config?.client;
+const IS_PG = DB_CLIENT === "pg";
+const IS_MYSQL = DB_CLIENT === "mysql" || DB_CLIENT === "mysql2";
+
 function round2(n) {
   const x = Number(n || 0);
   return Math.round(x * 100) / 100;
@@ -94,7 +98,13 @@ class BalanceSheetService {
         .andOn("je.organization_id", "=", knex.raw("?", [organizationId]))
         .andOn(knex.raw("je.deleted_at IS NULL"))
         .andOn("je.status", "=", knex.raw("?", ["posted"]))
-        .andOn("je.date", "<=", knex.raw("?", [asOfStr]));
+        .andOn(
+          IS_PG
+            ? knex.raw("je.date::date <= ?::date", [asOfStr])
+            : IS_MYSQL
+              ? knex.raw("DATE(je.date) <= ?", [asOfStr])
+              : knex.raw("je.date <= ?", [asOfStr])
+        );
     });
 
     const rows = await base

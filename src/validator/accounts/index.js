@@ -7,12 +7,24 @@ const {
 
 module.exports = {
   validateCreate(payload) {
-    const { error } = CreateAccountSchema.validate(payload);
+    const { value, error } = CreateAccountSchema.validate(payload, {
+      abortEarly: true,
+      allowUnknown: false,
+      convert: true,
+      stripUnknown: true,
+    });
     if (error) throw new InvariantError(error.message);
+    return value;
   },
   validateUpdate(payload) {
-    const { error } = UpdateAccountSchema.validate(payload);
+    const { value, error } = UpdateAccountSchema.validate(payload, {
+      abortEarly: true,
+      allowUnknown: false,
+      convert: true,
+      stripUnknown: true,
+    });
     if (error) throw new InvariantError(error.message);
+    return value;
   },
   validateImport(payload) {
     const { value, error } = ImportAccountsSchema.validate(payload, {

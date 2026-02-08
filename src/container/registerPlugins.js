@@ -12,6 +12,7 @@ const worksheetsPlugin = require("../api/worksheets");
 const equityStatementPlugin = require("../api/equity-statement");
 const subledgersPlugin = require("../api/subledgers");
 const closingsPlugin = require("../api/closings");
+const chartsPlugin = require("../api/charts");
 
 async function registerPlugins(server, container) {
   await server.register([
@@ -127,6 +128,15 @@ async function registerPlugins(server, container) {
       options: {
         service: container.closingsService,
         validator: container.closingsValidator,
+        auditLogService: container.auditLogService,
+      },
+    },
+
+    {
+      plugin: chartsPlugin,
+      options: {
+        service: container.chartsService,
+        validator: container.chartsValidator,
         auditLogService: container.auditLogService,
       },
     },

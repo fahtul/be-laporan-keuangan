@@ -1,6 +1,30 @@
 const knex = require("../database/knex");
 const InvariantError = require("../exceptions/InvariantError");
 
+const DB_CLIENT = knex?.client?.config?.client;
+const IS_PG = DB_CLIENT === "pg";
+const IS_MYSQL = DB_CLIENT === "mysql" || DB_CLIENT === "mysql2";
+
+function andWhereDateOnlyRange(qb, qualifiedColumn, fromDate, toDate) {
+  const fd = String(fromDate || "").trim();
+  const td = String(toDate || "").trim();
+
+  if (IS_PG) {
+    qb.andWhereRaw(`${qualifiedColumn}::date >= ?::date`, [fd]);
+    qb.andWhereRaw(`${qualifiedColumn}::date <= ?::date`, [td]);
+    return;
+  }
+
+  if (IS_MYSQL) {
+    qb.andWhereRaw(`DATE(${qualifiedColumn}) >= ?`, [fd]);
+    qb.andWhereRaw(`DATE(${qualifiedColumn}) <= ?`, [td]);
+    return;
+  }
+
+  qb.andWhere(qualifiedColumn, ">=", fd);
+  qb.andWhere(qualifiedColumn, "<=", td);
+}
+
 /**
  * Standard COA mapping (Excel-style):
  * - 4xx.. = Revenue (Pendapatan)
@@ -100,8 +124,7 @@ class IncomeStatementService {
       .andWhere("je.status", "posted")
       .andWhere("jl.organization_id", organizationId)
       .whereNull("jl.deleted_at")
-      .andWhere("je.date", ">=", fromDate)
-      .andWhere("je.date", "<=", toDate)
+      .modify((qb) => andWhereDateOnlyRange(qb, "je.date", fromDate, toDate))
       .groupBy("jl.account_id")
       .select("jl.account_id")
       .select(

@@ -211,7 +211,7 @@ class AccountsService {
       const newIdRow = await trx.raw("SELECT gen_random_uuid() AS id");
       const newId = newIdRow.rows[0].id;
 
-      const parentId = payload.parent_id ?? null;
+      const parentId = normalizeNullableString(payload.parent_id);
 
       await this._assertParentValid(
         { organizationId, id: newId, parentId },
@@ -299,7 +299,9 @@ class AccountsService {
     const nextNormal = before.normal_balance; // atau normalBalanceByType(before.type)
 
     const nextParent =
-      payload.parent_id === undefined ? before.parent_id : payload.parent_id;
+      payload.parent_id === undefined
+        ? before.parent_id
+        : normalizeNullableString(payload.parent_id);
 
     const nextCfActivity =
       payload.cf_activity === undefined
