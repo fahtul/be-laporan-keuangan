@@ -9,6 +9,17 @@ const SubledgerImportSchema = Joi.string()
   .valid("AR", "AP", "ar", "ap")
   .optional();
 
+const PlCategorySchema = Joi.string()
+  .valid(
+    "revenue",
+    "cogs",
+    "opex",
+    "depreciation_amortization",
+    "non_operating",
+    "other"
+  )
+  .optional();
+
 const ImportModeSchema = Joi.string().valid("upsert", "insert_only").default("upsert");
 
 const CreateAccountSchema = Joi.object({
@@ -22,6 +33,7 @@ const CreateAccountSchema = Joi.object({
   is_active: Joi.boolean().optional(),
   is_postable: Joi.boolean().optional(),
   cf_activity: CfActivitySchema.allow(null, ""),
+  pl_category: PlCategorySchema.allow(null, ""),
   requires_bp: Joi.boolean().optional(),
   subledger: SubledgerSchema.allow(null, ""),
 });
@@ -37,6 +49,7 @@ const UpdateAccountSchema = Joi.object({
   is_active: Joi.boolean().optional(),
   is_postable: Joi.boolean().optional(),
   cf_activity: CfActivitySchema.allow(null, ""),
+  pl_category: PlCategorySchema.allow(null, ""),
   requires_bp: Joi.boolean().optional(),
   subledger: SubledgerSchema.allow(null, ""),
 }).min(1);
@@ -58,6 +71,7 @@ const ImportAccountsSchema = Joi.object({
           .valid("cash", "operating", "investing", "financing")
           .allow(null, "")
           .optional(),
+        pl_category: PlCategorySchema.allow(null, ""),
 
         requires_bp: Joi.boolean().optional(),
         subledger: SubledgerImportSchema.allow(null, ""),

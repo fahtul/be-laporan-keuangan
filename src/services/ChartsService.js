@@ -115,6 +115,7 @@ class ChartsService {
     const opex = [];
     const grossProfit = [];
     const operatingProfit = [];
+    const ebitda = [];
     const netAfterTax = [];
 
     for (const b of buckets) {
@@ -135,6 +136,7 @@ class ChartsService {
       opex.push(Number(s.total_operating_expense || 0));
       grossProfit.push(Number(s.gross_profit || 0));
       operatingProfit.push(Number(s.operating_profit || 0));
+      ebitda.push(Number((s.ebitda ?? s.operating_profit) || 0));
       netAfterTax.push(Number(s.net_profit_after_tax || 0));
     }
 
@@ -144,11 +146,19 @@ class ChartsService {
       buckets,
       labels,
       series: {
+        // Primary series for chart L/R
+        chart_revenue: revenue,
+        chart_cogs: cogs,
+        chart_operating_expense: opex,
+        chart_ebitda: ebitda,
+
+        // Detailed series (backward compatible)
         total_revenue: revenue,
         total_cogs: cogs,
         total_operating_expense: opex,
         gross_profit: grossProfit,
         operating_profit: operatingProfit,
+        ebitda,
         net_profit_after_tax: netAfterTax,
       },
     };
@@ -397,4 +407,3 @@ class ChartsService {
 }
 
 module.exports = ChartsService;
-

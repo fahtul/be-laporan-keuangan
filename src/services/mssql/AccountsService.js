@@ -52,6 +52,7 @@ class AccountsService {
         "type",
         "normal_balance",
         "cf_activity",
+        "pl_category",
         "requires_bp",
         "subledger",
         "parent_id",
@@ -99,6 +100,7 @@ class AccountsService {
         "type",
         "normal_balance",
         "cf_activity",
+        "pl_category",
         "requires_bp",
         "subledger",
         "is_postable"
@@ -200,6 +202,11 @@ class AccountsService {
       String(payload.cf_activity).trim() !== ""
         ? String(payload.cf_activity).trim()
         : null;
+    const plCategory =
+      payload.pl_category !== undefined &&
+      String(payload.pl_category).trim() !== ""
+        ? String(payload.pl_category).trim()
+        : null;
     const requiresBp =
       payload.requires_bp !== undefined ? !!payload.requires_bp : false;
     const subledger =
@@ -227,6 +234,7 @@ class AccountsService {
           type,
           normal_balance, // ✅ wajib supaya ga null (seed kamu kemarin error karena ini)
           cf_activity: cfActivity,
+          pl_category: plCategory,
           requires_bp: requiresBp,
           subledger: subledger,
           parent_id: parentId,
@@ -308,6 +316,11 @@ class AccountsService {
         ? before.cf_activity ?? null
         : String(payload.cf_activity || "").trim() || null;
 
+    const nextPlCategory =
+      payload.pl_category === undefined
+        ? before.pl_category ?? null
+        : String(payload.pl_category || "").trim() || null;
+
     const nextRequiresBp =
       payload.requires_bp === undefined
         ? !!before.requires_bp
@@ -356,6 +369,7 @@ class AccountsService {
             parent_id: nextParent ?? null,
 
             cf_activity: nextCfActivity,
+            pl_category: nextPlCategory,
             requires_bp: nextRequiresBp,
             subledger: nextSubledger,
 
@@ -405,6 +419,7 @@ class AccountsService {
         account.cash_flow_category
       );
       const cf_activity = cashFlowCategory;
+      const pl_category = normalizeNullableString(account.pl_category);
 
       const subledgerRaw = normalizeNullableString(account.subledger);
       const subledger = subledgerRaw ? subledgerRaw.toLowerCase() : null;
@@ -426,6 +441,7 @@ class AccountsService {
         parent_code: parent_code || null,
         is_postable,
         cf_activity: cf_activity || null,
+        pl_category: pl_category || null,
         requires_bp,
         subledger: subledger || null,
         normal_balance: normalBalanceByType(type),
@@ -520,6 +536,7 @@ class AccountsService {
             type: acc.type,
             normal_balance: acc.normal_balance,
             cf_activity: acc.cf_activity,
+            pl_category: acc.pl_category,
             requires_bp: acc.requires_bp,
             subledger: acc.subledger,
             parent_id: null,
@@ -558,6 +575,7 @@ class AccountsService {
             type: acc.type,
             normal_balance: acc.normal_balance,
             cf_activity: acc.cf_activity,
+            pl_category: acc.pl_category,
             requires_bp: acc.requires_bp,
             subledger: acc.subledger,
             is_postable: acc.is_postable,
@@ -616,6 +634,7 @@ class AccountsService {
         "code",
         "name",
         "type",
+        "pl_category",
         "parent_id",
         "is_postable",
         "is_active",

@@ -40,6 +40,17 @@ function round2(n) {
   return Math.round(x * 100) / 100;
 }
 
+function normalizePlCategory(v) {
+  return String(v || "")
+    .trim()
+    .toLowerCase();
+}
+
+function isDepreciationAmortizationAccount({ plCategory }) {
+  const cat = normalizePlCategory(plCategory);
+  return cat === "depreciation_amortization";
+}
+
 function normalizeCode(code) {
   return String(code ?? "").trim();
 }
@@ -134,7 +145,7 @@ class IncomeStatementService {
       .as("agg");
 
     const base = knex("accounts as a")
-      .select("a.id as account_id", "a.code", "a.name", "a.type")
+      .select("a.id as account_id", "a.code", "a.name", "a.type", "a.pl_category")
       .select(
         knex.raw("COALESCE(agg.sum_debit, 0) as sum_debit"),
         knex.raw("COALESCE(agg.sum_credit, 0) as sum_credit")
@@ -166,6 +177,7 @@ class IncomeStatementService {
       cogs: { key: "cogs", title: "HPP", items: [], total: 0 },
       opex: { key: "opex", title: "BEBAN", items: [], total: 0 },
     };
+    let depreciationAmortizationTotal = 0;
 
     for (const r of rows) {
       const code = normalizeCode(r.code);
@@ -197,6 +209,16 @@ class IncomeStatementService {
       const sec = sectionsByKey[sectionKey];
       sec.items.push(item);
       sec.total = round2(sec.total + amount);
+
+      // For EBITDA, add back depreciation/amortization expense from operating expense.
+      if (
+        sectionKey === "opex" &&
+        isDepreciationAmortizationAccount({ plCategory: r.pl_category })
+      ) {
+        depreciationAmortizationTotal = round2(
+          depreciationAmortizationTotal + amount
+        );
+      }
     }
 
     // Stable sort items (numeric code)
@@ -218,6 +240,7 @@ class IncomeStatementService {
 
     const grossProfit = round2(totalRevenue - totalCogs);
     const operatingProfit = round2(grossProfit - totalOpex);
+    const ebitda = round2(operatingProfit + depreciationAmortizationTotal);
 
     const taxRateNum = taxRate === null ? null : Number(taxRate);
     const taxAmount =
@@ -240,6 +263,8 @@ class IncomeStatementService {
         total_operating_expense: totalOpex,
         operating_profit:
           groupingNorm === "simple" ? round2(totalRevenue - totalOpex) : operatingProfit,
+        depreciation_amortization: depreciationAmortizationTotal,
+        ebitda,
         tax_rate: taxRateNum,
         tax_amount: taxAmount,
         net_profit_after_tax: netAfterTax,
