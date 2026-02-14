@@ -256,6 +256,41 @@ class JournalEntriesService {
     return { before, after };
   }
 
+  // ========== Soft Delete Draft ==========
+  async softDelete({ organizationId, id }) {
+    await knex.transaction(async (trx) => {
+      const entry = await trx("journal_entries")
+        .where({ organization_id: organizationId, id })
+        .whereNull("deleted_at")
+        .forUpdate()
+        .first();
+
+      if (!entry) throw new NotFoundError("Journal entry not found");
+
+      if (entry.status !== "draft") {
+        throw new InvariantError("Only draft entries can be deleted");
+      }
+
+      const now = trx.fn.now();
+
+      await trx("journal_lines")
+        .where({ organization_id: organizationId, entry_id: id })
+        .whereNull("deleted_at")
+        .update({
+          deleted_at: now,
+          updated_at: now,
+        });
+
+      await trx("journal_entries")
+        .where({ organization_id: organizationId, id })
+        .whereNull("deleted_at")
+        .update({
+          deleted_at: now,
+          updated_at: now,
+        });
+    });
+  }
+
   // ========== Post ==========
   async post({ organizationId, id, actorId, idempotencyKey }) {
     if (!idempotencyKey) {
@@ -458,6 +493,191 @@ class JournalEntriesService {
     });
 
     return this.getById({ organizationId, id: payload.__createdId });
+  }
+
+  // ========== Amend Posted (reverse + corrected, atomic) ==========
+  async amend({ organizationId, id, actorId, payload }) {
+    const original = await this.getById({ organizationId, id });
+
+    if (original.status !== "posted") {
+      throw new InvariantError("Only posted entries can be amended");
+    }
+
+    if (original.entry_type === "closing" || original.entry_type === "opening") {
+      throw new InvariantError("Closing/Opening entries cannot be amended");
+    }
+
+    if (original.reversal_of_id) {
+      throw new InvariantError("Reversing entries cannot be amended");
+    }
+
+    const correctedLines = Array.isArray(payload?.lines) ? payload.lines : [];
+    if (correctedLines.length < 2) {
+      throw new InvariantError("Amendment must include at least 2 lines");
+    }
+
+    const reverseDate = payload?.reverse_date ?? original.date;
+    const correctedDate = payload?.date ?? original.date;
+
+    const reverseMemo =
+      payload?.reverse_memo ??
+      `Reversal (amend) of ${original.id}${original.memo ? ` - ${original.memo}` : ""}`;
+
+    const correctedMemo =
+      payload?.memo ??
+      `Amendment of ${original.id}${original.memo ? ` - ${original.memo}` : ""}`;
+
+    let reversingEntryId = null;
+    let correctedEntryId = null;
+
+    await knex.transaction(async (trx) => {
+      const lockedOriginal = await trx("journal_entries")
+        .where({ organization_id: organizationId, id })
+        .whereNull("deleted_at")
+        .forUpdate()
+        .first();
+
+      if (!lockedOriginal) throw new NotFoundError("Journal entry not found");
+      if (lockedOriginal.status !== "posted") {
+        throw new InvariantError("Only posted entries can be amended");
+      }
+      if (
+        lockedOriginal.entry_type === "closing" ||
+        lockedOriginal.entry_type === "opening"
+      ) {
+        throw new InvariantError("Closing/Opening entries cannot be amended");
+      }
+      if (lockedOriginal.reversal_of_id) {
+        throw new InvariantError("Reversing entries cannot be amended");
+      }
+
+      const alreadyReversed = await trx("journal_entries")
+        .select("id")
+        .where({ organization_id: organizationId, reversal_of_id: id })
+        .whereNull("deleted_at")
+        .first();
+
+      if (alreadyReversed) {
+        throw new InvariantError("Entry already reversed/amended");
+      }
+
+      await this._assertPeriodOpen({ organizationId, date: reverseDate }, trx);
+      await this._assertPeriodOpen({ organizationId, date: correctedDate }, trx);
+
+      // 1) create reversing posted entry
+      const reversedLines = (original.lines || []).map((l) => ({
+        organization_id: organizationId,
+        account_id: l.account_id,
+        bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
+        debit: Number(l.credit || 0),
+        credit: Number(l.debit || 0),
+        memo: l.memo ?? null,
+      }));
+
+      if (reversedLines.length < 2) {
+        throw new InvariantError("Original entry has insufficient lines to amend");
+      }
+
+      await this._assertAccountsValid({ organizationId, lines: reversedLines }, trx);
+      await this._assertBusinessPartnersValid(
+        { organizationId, lines: reversedLines },
+        trx
+      );
+      await this._assertBpRequiredByAccounts(
+        { organizationId, lines: reversedLines },
+        trx
+      );
+      this._assertBalanced(reversedLines);
+
+      const [revInserted] = await trx("journal_entries")
+        .insert({
+          organization_id: organizationId,
+          date: reverseDate,
+          memo: reverseMemo,
+          status: "posted",
+          posted_at: trx.fn.now(),
+          posted_by: actorId,
+          reversal_of_id: original.id,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning(["id"]);
+
+      reversingEntryId = revInserted?.id;
+      if (!reversingEntryId) {
+        throw new InvariantError("Failed to create reversing entry");
+      }
+
+      await trx("journal_lines").insert(
+        reversedLines.map((l) => ({
+          organization_id: organizationId,
+          entry_id: reversingEntryId,
+          account_id: l.account_id,
+          bp_id: l.bp_id,
+          debit: l.debit,
+          credit: l.credit,
+          memo: l.memo,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        }))
+      );
+
+      // 2) create corrected posted entry
+      await this._assertAccountsValid({ organizationId, lines: correctedLines }, trx);
+      await this._assertBusinessPartnersValid(
+        { organizationId, lines: correctedLines },
+        trx
+      );
+      await this._assertBpRequiredByAccounts(
+        { organizationId, lines: correctedLines },
+        trx
+      );
+      this._assertBalanced(correctedLines);
+
+      const [corrInserted] = await trx("journal_entries")
+        .insert({
+          organization_id: organizationId,
+          date: correctedDate,
+          memo: correctedMemo,
+          status: "posted",
+          posted_at: trx.fn.now(),
+          posted_by: actorId,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning(["id"]);
+
+      correctedEntryId = corrInserted?.id;
+      if (!correctedEntryId) {
+        throw new InvariantError("Failed to create corrected entry");
+      }
+
+      await trx("journal_lines").insert(
+        correctedLines.map((l) => ({
+          organization_id: organizationId,
+          entry_id: correctedEntryId,
+          account_id: l.account_id,
+          bp_id: l.bp_id ? String(l.bp_id).trim() || null : null,
+          debit: Number(l.debit || 0),
+          credit: Number(l.credit || 0),
+          memo: l.memo ?? null,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        }))
+      );
+    });
+
+    return {
+      original_entry: original,
+      reversing_entry: await this.getById({
+        organizationId,
+        id: reversingEntryId,
+      }),
+      corrected_entry: await this.getById({
+        organizationId,
+        id: correctedEntryId,
+      }),
+    };
   }
 
   // ========== Helpers ==========

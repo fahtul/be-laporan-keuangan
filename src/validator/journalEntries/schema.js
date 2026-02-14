@@ -40,11 +40,23 @@ const ReverseJournalEntrySchema = Joi.object({
   memo: Joi.string().allow("", null).max(2000).optional(),
 });
 
+const AmendJournalEntrySchema = Joi.object({
+  // correction entry (new journal)
+  date: YmdSchema.optional(),
+  memo: Joi.string().allow("", null).max(2000).optional(),
+  lines: Joi.array().items(JournalLineSchema).min(2).required(),
+
+  // reversing entry (of original)
+  reverse_date: YmdSchema.optional(),
+  reverse_memo: Joi.string().allow("", null).max(2000).optional(),
+});
+
 module.exports = {
   JournalLineSchema,
   CreateJournalEntrySchema,
   UpdateJournalEntrySchema,
   PostJournalEntrySchema,
   ReverseJournalEntrySchema,
+  AmendJournalEntrySchema,
 };
 

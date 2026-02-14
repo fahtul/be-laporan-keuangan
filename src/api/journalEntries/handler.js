@@ -112,6 +112,64 @@ class JournalEntriesHandler {
     return h.response({ status: "success", data: after }).code(200);
   }
 
+  async remove(request, h) {
+    const organizationId = request.auth.credentials.organizationId;
+    const actorId = request.auth.credentials.id;
+    const { id } = request.params;
+
+    const before = await this._service.getById({ organizationId, id });
+
+    await this._service.softDelete({ organizationId, id });
+
+    await this._audit.log({
+      organizationId,
+      actorId,
+      action: "journal_entry.delete",
+      entity: "journal_entry",
+      entityId: id,
+      before,
+      after: null,
+      ip: request.info.remoteAddress,
+      userAgent: request.headers["user-agent"],
+    });
+
+    return h
+      .response({ status: "success", message: "Journal entry deleted" })
+      .code(200);
+  }
+
+  async amend(request, h) {
+    this._validator.validateAmend(request.payload || {});
+
+    const organizationId = request.auth.credentials.organizationId;
+    const actorId = request.auth.credentials.id;
+    const { id } = request.params;
+
+    const result = await this._service.amend({
+      organizationId,
+      id,
+      actorId,
+      payload: request.payload || {},
+    });
+
+    await this._audit.log({
+      organizationId,
+      actorId,
+      action: "journal_entry.amend",
+      entity: "journal_entry",
+      entityId: id,
+      before: result.original_entry,
+      after: {
+        reversing_entry: result.reversing_entry,
+        corrected_entry: result.corrected_entry,
+      },
+      ip: request.info.remoteAddress,
+      userAgent: request.headers["user-agent"],
+    });
+
+    return h.response({ status: "success", data: result }).code(201);
+  }
+
   async post(request, h) {
     try {
       this._validator.validatePost(request.payload || {});

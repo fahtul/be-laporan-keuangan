@@ -4,6 +4,7 @@ const {
   UpdateJournalEntrySchema,
   PostJournalEntrySchema,
   ReverseJournalEntrySchema,
+  AmendJournalEntrySchema,
 } = require("./schema");
 
 module.exports = {
@@ -33,6 +34,14 @@ module.exports = {
 
   validateReverse(payload) {
     const { error } = ReverseJournalEntrySchema.validate(payload || {}, {
+      abortEarly: false,
+      stripUnknown: true,
+    });
+    if (error) throw new InvariantError(error.message);
+  },
+
+  validateAmend(payload) {
+    const { error } = AmendJournalEntrySchema.validate(payload || {}, {
       abortEarly: false,
       stripUnknown: true,
     });

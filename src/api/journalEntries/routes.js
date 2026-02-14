@@ -33,6 +33,22 @@ module.exports = (handler) => [
     options: { pre: [requireRole(["admin", "accountant"])] },
   },
 
+  // DELETE draft (soft delete)
+  {
+    method: "DELETE",
+    path: "/v1/journal-entries/{id}",
+    handler: handler.remove,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
+
+  // AMEND posted (reverse + corrected entry, both posted)
+  {
+    method: "POST",
+    path: "/v1/journal-entries/{id}/amend",
+    handler: handler.amend,
+    options: { pre: [requireRole(["admin", "accountant"])] },
+  },
+
   // POST (idempotent; uses Idempotency-Key header)
   {
     method: "POST",
